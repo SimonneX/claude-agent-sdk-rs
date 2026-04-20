@@ -129,6 +129,95 @@ pub struct SdkMcpTool {
     pub handler: Arc<dyn ToolHandler>,
 }
 
+// ============================================================================
+// MCP Status Types (for get_mcp_status)
+// ============================================================================
+
+/// MCP server connection status
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum McpServerConnectionStatus {
+    /// Server is connected
+    Connected,
+    /// Server connection failed
+    Failed,
+    /// Server needs authentication
+    NeedsAuth,
+    /// Server is pending connection
+    Pending,
+    /// Server is disabled
+    Disabled,
+}
+
+/// MCP server info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerInfo {
+    /// Server name
+    pub name: String,
+    /// Server version
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+/// MCP tool info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpToolInfo {
+    /// Tool name
+    pub name: String,
+    /// Tool description
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Tool annotations
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<McpToolAnnotations>,
+}
+
+/// MCP tool annotations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpToolAnnotations {
+    /// Whether the tool is read-only
+    #[serde(skip_serializing_if = "Option::is_none", rename = "readOnly")]
+    pub read_only: Option<bool>,
+    /// Whether the tool is destructive
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destructive: Option<bool>,
+    /// Whether the tool has open world access
+    #[serde(skip_serializing_if = "Option::is_none", rename = "openWorld")]
+    pub open_world: Option<bool>,
+}
+
+/// MCP server status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerStatus {
+    /// Server name
+    pub name: String,
+    /// Connection status
+    pub status: McpServerConnectionStatus,
+    /// Server info (if connected)
+    #[serde(skip_serializing_if = "Option::is_none", rename = "serverInfo")]
+    pub server_info: Option<McpServerInfo>,
+    /// Error message (if failed)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Server configuration
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<serde_json::Value>,
+    /// Server scope
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// Available tools
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<McpToolInfo>>,
+}
+
+/// MCP status response (for get_mcp_status)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpStatusResponse {
+    /// MCP servers status
+    #[serde(rename = "mcpServers")]
+    pub mcp_servers: Vec<McpServerStatus>,
+}
+
 /// Create an in-process MCP server
 pub fn create_sdk_mcp_server(
     name: impl Into<String>,
@@ -274,4 +363,78 @@ macro_rules! tool {
             handler: std::sync::Arc::new(Handler($handler)),
         }
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mcp_server_connection_status_serialization() {
+        let status = McpServerConnectionStatus::Connected;
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json, "connected");
+    }
+
+    #[test]
+    fn test_mcp_server_status_serialization() {
+        let status = McpServerStatus {
+            name: "my-server".to_string(),
+            status: McpServerConnectionStatus::Connected,
+            server_info: Some(McpServerInfo {
+                name: "my-server".to_string(),
+                version: Some("1.0.0".to_string()),
+            }),
+            error: None,
+            config: None,
+            scope: None,
+            tools: Some(vec![McpToolInfo {
+                name: "greet".to_string(),
+                description: Some("Greet a user".to_string()),
+                annotations: Some(McpToolAnnotations {
+                    read_only: Some(true),
+                    destructive: Some(false),
+                    open_world: None,
+                }),
+            }]),
+        };
+
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["name"], "my-server");
+        assert_eq!(json["status"], "connected");
+        assert_eq!(json["serverInfo"]["version"], "1.0.0");
+        assert_eq!(json["tools"][0]["name"], "greet");
+    }
+
+    #[test]
+    fn test_mcp_status_response_serialization() {
+        let response = McpStatusResponse {
+            mcp_servers: vec![McpServerStatus {
+                name: "server-1".to_string(),
+                status: McpServerConnectionStatus::Pending,
+                server_info: None,
+                error: None,
+                config: None,
+                scope: None,
+                tools: None,
+            }],
+        };
+
+        let json = serde_json::to_value(&response).unwrap();
+        assert_eq!(json["mcpServers"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_mcp_tool_annotations_serialization() {
+        let annotations = McpToolAnnotations {
+            read_only: Some(true),
+            destructive: Some(false),
+            open_world: Some(true),
+        };
+
+        let json = serde_json::to_value(&annotations).unwrap();
+        assert_eq!(json["readOnly"], true);
+        assert_eq!(json["destructive"], false);
+        assert_eq!(json["openWorld"], true);
+    }
 }

@@ -502,4 +502,77 @@ impl QueryFull {
             .await
             .map_err(|e| ClaudeError::ControlProtocol(format!("MCP server error: {}", e)))
     }
+
+    /// Get MCP server status for all configured servers
+    pub async fn get_mcp_status(&self) -> Result<crate::types::mcp::McpStatusResponse> {
+        let request = json!({
+            "subtype": "mcp_status"
+        });
+
+        let response = self.send_control_request(request).await?;
+
+        // Parse the response into McpStatusResponse
+        let status_response: crate::types::mcp::McpStatusResponse =
+            serde_json::from_value(response).map_err(|e| {
+                ClaudeError::ControlProtocol(format!("Failed to parse MCP status response: {}", e))
+            })?;
+
+        Ok(status_response)
+    }
+
+    /// Reconnect a failed MCP server
+    pub async fn reconnect_mcp_server(&self, server_name: &str) -> Result<()> {
+        let request = json!({
+            "subtype": "mcp_reconnect",
+            "serverName": server_name
+        });
+
+        self.send_control_request(request).await?;
+        Ok(())
+    }
+
+    /// Toggle an MCP server (enable/disable)
+    pub async fn toggle_mcp_server(&self, server_name: &str, enabled: bool) -> Result<()> {
+        let request = json!({
+            "subtype": "mcp_toggle",
+            "serverName": server_name,
+            "enabled": enabled
+        });
+
+        self.send_control_request(request).await?;
+        Ok(())
+    }
+
+    /// Stop a running task
+    pub async fn stop_task(&self, task_id: &str) -> Result<()> {
+        let request = json!({
+            "subtype": "stop_task",
+            "task_id": task_id
+        });
+
+        self.send_control_request(request).await?;
+        Ok(())
+    }
+
+    /// Get context usage information
+    pub async fn get_context_usage(
+        &self,
+    ) -> Result<crate::types::context::ContextUsageResponse> {
+        let request = json!({
+            "subtype": "context_usage"
+        });
+
+        let response = self.send_control_request(request).await?;
+
+        // Parse the response into ContextUsageResponse
+        let context_response: crate::types::context::ContextUsageResponse =
+            serde_json::from_value(response).map_err(|e| {
+                ClaudeError::ControlProtocol(format!(
+                    "Failed to parse context usage response: {}",
+                    e
+                ))
+            })?;
+
+        Ok(context_response)
+    }
 }

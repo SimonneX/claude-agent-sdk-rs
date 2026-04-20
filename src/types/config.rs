@@ -161,6 +161,26 @@ pub struct ClaudeAgentOptions {
     /// ```
     #[builder(default, setter(strip_option))]
     pub efficiency: Option<EfficiencyConfig>,
+
+    /// Skills to enable
+    #[builder(default, setter(into))]
+    pub skills: Vec<String>,
+
+    /// Thinking configuration (structured, not just max_tokens)
+    #[builder(default, setter(strip_option))]
+    pub thinking: Option<ThinkingConfig>,
+
+    /// Effort level
+    #[builder(default, setter(into, strip_option))]
+    pub effort: Option<String>,
+
+    /// Task budget configuration
+    #[builder(default, setter(strip_option))]
+    pub task_budget: Option<TaskBudget>,
+
+    /// Load timeout in milliseconds
+    #[builder(default, setter(strip_option))]
+    pub load_timeout_ms: Option<u64>,
 }
 
 impl Default for ClaudeAgentOptions {
@@ -275,6 +295,42 @@ pub struct AgentDefinition {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default, setter(strip_option))]
     pub model: Option<AgentModel>,
+    /// Tools disallowed for the agent
+    #[serde(skip_serializing_if = "Option::is_none", rename = "disallowedTools")]
+    #[builder(default, setter(into, strip_option))]
+    pub disallowed_tools: Option<Vec<String>>,
+    /// Skills available to the agent
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default, setter(into, strip_option))]
+    pub skills: Option<Vec<String>>,
+    /// Memory configuration
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default, setter(strip_option))]
+    pub memory: Option<serde_json::Value>,
+    /// MCP servers specific to this agent
+    #[serde(skip_serializing_if = "Option::is_none", rename = "mcpServers")]
+    #[builder(default, setter(strip_option))]
+    pub mcp_servers: Option<serde_json::Value>,
+    /// Initial prompt for the agent
+    #[serde(skip_serializing_if = "Option::is_none", rename = "initialPrompt")]
+    #[builder(default, setter(into, strip_option))]
+    pub initial_prompt: Option<String>,
+    /// Maximum turns for the agent
+    #[serde(skip_serializing_if = "Option::is_none", rename = "maxTurns")]
+    #[builder(default, setter(strip_option))]
+    pub max_turns: Option<u32>,
+    /// Whether to run in background
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default, setter(strip_option))]
+    pub background: Option<bool>,
+    /// Effort level for the agent
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default, setter(into, strip_option))]
+    pub effort: Option<String>,
+    /// Permission mode for the agent
+    #[serde(skip_serializing_if = "Option::is_none", rename = "permissionMode")]
+    #[builder(default, setter(strip_option))]
+    pub permission_mode: Option<String>,
 }
 
 /// Model selection for agents
@@ -298,6 +354,35 @@ pub enum SdkBeta {
     /// Extended context window (1M tokens)
     #[serde(rename = "context-1m-2025-08-07")]
     Context1M,
+}
+
+/// Thinking configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ThinkingConfig {
+    /// Adaptive thinking (default)
+    Adaptive,
+    /// Enabled with budget
+    Enabled {
+        /// Budget tokens for thinking
+        #[serde(rename = "budget_tokens")]
+        budget_tokens: u32,
+    },
+    /// Disabled
+    Disabled,
+}
+
+impl Default for ThinkingConfig {
+    fn default() -> Self {
+        ThinkingConfig::Adaptive
+    }
+}
+
+/// Task budget configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskBudget {
+    /// Total budget
+    pub total: f64,
 }
 
 /// Tools configuration
@@ -603,5 +688,91 @@ mod tests {
             }
             _ => panic!("Expected Tools::Preset"),
         }
+    }
+
+    #[test]
+    fn test_thinking_config_adaptive() {
+        let config = ThinkingConfig::Adaptive;
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["type"], "adaptive");
+    }
+
+    #[test]
+    fn test_thinking_config_enabled() {
+        let config = ThinkingConfig::Enabled { budget_tokens: 2000 };
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["type"], "enabled");
+        assert_eq!(json["budget_tokens"], 2000);
+    }
+
+    #[test]
+    fn test_thinking_config_disabled() {
+        let config = ThinkingConfig::Disabled;
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["type"], "disabled");
+    }
+
+    #[test]
+    fn test_task_budget() {
+        let budget = TaskBudget { total: 10.0 };
+        let json = serde_json::to_value(&budget).unwrap();
+        assert_eq!(json["total"], 10.0);
+    }
+
+    #[test]
+    fn test_agent_definition_extended_fields() {
+        let agent = AgentDefinition::builder()
+            .description("Code reviewer")
+            .prompt("Review code for issues")
+            .skills(vec!["code-review".to_string()])
+            .max_turns(5)
+            .effort("high")
+            .build();
+
+        assert_eq!(agent.skills, Some(vec!["code-review".to_string()]));
+        assert_eq!(agent.max_turns, Some(5));
+        assert_eq!(agent.effort, Some("high".to_string()));
+    }
+
+    #[test]
+    fn test_agent_definition_serialization() {
+        let agent = AgentDefinition {
+            description: "Test agent".to_string(),
+            prompt: "Do something".to_string(),
+            tools: Some(vec!["Read".to_string()]),
+            model: Some(AgentModel::Sonnet),
+            disallowed_tools: Some(vec!["Bash".to_string()]),
+            skills: Some(vec!["skill1".to_string()]),
+            memory: None,
+            mcp_servers: None,
+            initial_prompt: Some("Hello".to_string()),
+            max_turns: Some(10),
+            background: Some(true),
+            effort: Some("medium".to_string()),
+            permission_mode: Some("acceptEdits".to_string()),
+        };
+
+        let json = serde_json::to_value(&agent).unwrap();
+        assert_eq!(json["description"], "Test agent");
+        assert_eq!(json["disallowedTools"][0], "Bash");
+        assert_eq!(json["maxTurns"], 10);
+        assert_eq!(json["background"], true);
+    }
+
+    #[test]
+    fn test_claude_agent_options_new_fields() {
+        let options = ClaudeAgentOptions::builder()
+            .skills(vec!["skill1".to_string()])
+            .thinking(ThinkingConfig::Enabled { budget_tokens: 5000 })
+            .effort("high")
+            .task_budget(TaskBudget { total: 5.0 })
+            .load_timeout_ms(30000)
+            .build();
+
+        assert_eq!(options.skills, vec!["skill1"]);
+        assert!(options.thinking.is_some());
+        assert_eq!(options.effort, Some("high".to_string()));
+        assert!(options.task_budget.is_some());
+        assert_eq!(options.load_timeout_ms, Some(30000));
     }
 }

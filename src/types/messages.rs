@@ -48,6 +48,18 @@ pub enum Message {
     /// Control cancel request (ignore this - it's internal control protocol)
     #[serde(rename = "control_cancel_request")]
     ControlCancelRequest(serde_json::Value),
+    /// Task started message
+    #[serde(rename = "task_started")]
+    TaskStarted(TaskStartedMessage),
+    /// Task progress message
+    #[serde(rename = "task_progress")]
+    TaskProgress(TaskProgressMessage),
+    /// Task notification message
+    #[serde(rename = "task_notification")]
+    TaskNotification(TaskNotificationMessage),
+    /// Rate limit event
+    #[serde(rename = "rate_limit")]
+    RateLimit(RateLimitEvent),
 }
 
 /// User message
@@ -197,6 +209,21 @@ pub struct ResultMessage {
     /// Structured output (when output_format is specified)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub structured_output: Option<serde_json::Value>,
+    /// Stop reason
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+    /// Model usage statistics
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_usage: Option<serde_json::Value>,
+    /// Permission denials list
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_denials: Option<Vec<serde_json::Value>>,
+    /// Error messages
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub errors: Option<Vec<String>>,
+    /// Message UUID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
 }
 
 /// Stream event message
@@ -211,6 +238,165 @@ pub struct StreamEvent {
     /// Parent tool use ID (if applicable)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_tool_use_id: Option<String>,
+}
+
+/// Task started message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskStartedMessage {
+    /// Task ID
+    pub task_id: String,
+    /// Task description
+    pub description: String,
+    /// UUID
+    pub uuid: String,
+    /// Session ID
+    pub session_id: String,
+    /// Tool use ID (if applicable)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    /// Task type (if applicable)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_type: Option<String>,
+}
+
+/// Task progress message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskProgressMessage {
+    /// Task ID
+    pub task_id: String,
+    /// Progress description
+    pub description: String,
+    /// Usage statistics
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TaskUsage>,
+    /// UUID
+    pub uuid: String,
+    /// Session ID
+    pub session_id: String,
+    /// Tool use ID (if applicable)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    /// Last tool name used
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_tool_name: Option<String>,
+}
+
+/// Task usage statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskUsage {
+    /// Total tokens used
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_tokens: Option<u64>,
+    /// Number of tool uses
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_uses: Option<u32>,
+    /// Duration in milliseconds
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+}
+
+/// Task notification message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskNotificationMessage {
+    /// Task ID
+    pub task_id: String,
+    /// Task status (completed, failed, stopped)
+    pub status: TaskNotificationStatus,
+    /// Output file path (if applicable)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_file: Option<String>,
+    /// Summary of the task
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// UUID
+    pub uuid: String,
+    /// Session ID
+    pub session_id: String,
+    /// Tool use ID (if applicable)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    /// Usage statistics
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<TaskUsage>,
+}
+
+/// Task notification status
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskNotificationStatus {
+    /// Task completed successfully
+    Completed,
+    /// Task failed
+    Failed,
+    /// Task was stopped
+    Stopped,
+}
+
+/// Rate limit event
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimitEvent {
+    /// Rate limit information
+    pub rate_limit_info: RateLimitInfo,
+    /// UUID
+    pub uuid: String,
+    /// Session ID
+    pub session_id: String,
+}
+
+/// Rate limit information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimitInfo {
+    /// Rate limit status (allowed, allowed_warning, rejected)
+    pub status: RateLimitStatus,
+    /// When the limit resets
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resets_at: Option<String>,
+    /// Rate limit type (five_hour, seven_day, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit_type: Option<RateLimitType>,
+    /// Utilization percentage
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub utilization: Option<f64>,
+    /// Overage status
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overage_status: Option<RateLimitStatus>,
+    /// When overage resets
+    #[serde(skip_serializing_if = "Option::is_none", rename = "overage_resets_at")]
+    pub overage_resets_at: Option<String>,
+    /// Reason for overage being disabled
+    #[serde(skip_serializing_if = "Option::is_none", rename = "overage_disabled_reason")]
+    pub overage_disabled_reason: Option<String>,
+    /// Raw data
+    #[serde(flatten)]
+    pub raw: serde_json::Value,
+}
+
+/// Rate limit status
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RateLimitStatus {
+    /// Request allowed
+    Allowed,
+    /// Request allowed but with warning
+    AllowedWarning,
+    /// Request rejected
+    Rejected,
+}
+
+/// Rate limit type
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RateLimitType {
+    /// Five hour limit
+    FiveHour,
+    /// Seven day limit (default)
+    SevenDay,
+    /// Seven day Opus limit
+    SevenDayOpus,
+    /// Seven day Sonnet limit
+    SevenDaySonnet,
+    /// Overage
+    Overage,
 }
 
 /// Content block types
@@ -769,5 +955,139 @@ mod tests {
         assert!(block.is_err());
         let err = block.unwrap_err().to_string();
         assert!(err.contains("exceeds maximum size"));
+    }
+
+    #[test]
+    fn test_task_started_message_deserialization() {
+        let json_str = r#"{
+            "type": "task_started",
+            "task_id": "task-123",
+            "description": "Building the project",
+            "uuid": "uuid-123",
+            "session_id": "session-1",
+            "tool_use_id": "tool-1",
+            "task_type": "build"
+        }"#;
+
+        let msg: Message = serde_json::from_str(json_str).unwrap();
+        match msg {
+            Message::TaskStarted(task) => {
+                assert_eq!(task.task_id, "task-123");
+                assert_eq!(task.description, "Building the project");
+                assert_eq!(task.task_type, Some("build".to_string()));
+            }
+            _ => panic!("Expected TaskStarted variant"),
+        }
+    }
+
+    #[test]
+    fn test_task_progress_message_deserialization() {
+        let json_str = r#"{
+            "type": "task_progress",
+            "task_id": "task-123",
+            "description": "Progress update",
+            "usage": {"total_tokens": 1000, "tool_uses": 5},
+            "uuid": "uuid-456",
+            "session_id": "session-1",
+            "last_tool_name": "Bash"
+        }"#;
+
+        let msg: Message = serde_json::from_str(json_str).unwrap();
+        match msg {
+            Message::TaskProgress(progress) => {
+                assert_eq!(progress.task_id, "task-123");
+                assert!(progress.usage.is_some());
+                assert_eq!(progress.last_tool_name, Some("Bash".to_string()));
+            }
+            _ => panic!("Expected TaskProgress variant"),
+        }
+    }
+
+    #[test]
+    fn test_task_notification_message_deserialization() {
+        let json_str = r#"{
+            "type": "task_notification",
+            "task_id": "task-123",
+            "status": "completed",
+            "output_file": "/tmp/output.txt",
+            "summary": "Build completed successfully",
+            "uuid": "uuid-789",
+            "session_id": "session-1"
+        }"#;
+
+        let msg: Message = serde_json::from_str(json_str).unwrap();
+        match msg {
+            Message::TaskNotification(notification) => {
+                assert_eq!(notification.task_id, "task-123");
+                assert_eq!(notification.status, TaskNotificationStatus::Completed);
+                assert_eq!(notification.output_file, Some("/tmp/output.txt".to_string()));
+            }
+            _ => panic!("Expected TaskNotification variant"),
+        }
+    }
+
+    #[test]
+    fn test_rate_limit_event_deserialization() {
+        let json_str = r#"{
+            "type": "rate_limit",
+            "rate_limit_info": {
+                "status": "allowed_warning",
+                "resets_at": "2024-01-01T00:00:00Z",
+                "rate_limit_type": "seven_day",
+                "utilization": 80.5
+            },
+            "uuid": "uuid-limit",
+            "session_id": "session-1"
+        }"#;
+
+        let msg: Message = serde_json::from_str(json_str).unwrap();
+        match msg {
+            Message::RateLimit(rate_limit) => {
+                assert_eq!(rate_limit.rate_limit_info.status, RateLimitStatus::AllowedWarning);
+                assert_eq!(rate_limit.rate_limit_info.rate_limit_type, Some(RateLimitType::SevenDay));
+                assert_eq!(rate_limit.rate_limit_info.utilization, Some(80.5));
+            }
+            _ => panic!("Expected RateLimit variant"),
+        }
+    }
+
+    #[test]
+    fn test_result_message_with_new_fields() {
+        let json_str = r#"{
+            "type": "result",
+            "subtype": "query_complete",
+            "duration_ms": 1500,
+            "duration_api_ms": 1200,
+            "is_error": false,
+            "num_turns": 3,
+            "session_id": "test-session",
+            "stop_reason": "end_turn",
+            "uuid": "result-uuid",
+            "errors": []
+        }"#;
+
+        let msg: Message = serde_json::from_str(json_str).unwrap();
+        match msg {
+            Message::Result(result) => {
+                assert_eq!(result.stop_reason, Some("end_turn".to_string()));
+                assert_eq!(result.uuid, Some("result-uuid".to_string()));
+                assert!(result.errors.is_some());
+            }
+            _ => panic!("Expected Result variant"),
+        }
+    }
+
+    #[test]
+    fn test_rate_limit_status_serialization() {
+        let status = RateLimitStatus::AllowedWarning;
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json, "allowed_warning");
+    }
+
+    #[test]
+    fn test_task_notification_status_serialization() {
+        let status = TaskNotificationStatus::Failed;
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json, "failed");
     }
 }

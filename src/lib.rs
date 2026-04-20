@@ -237,6 +237,7 @@ pub mod client;
 pub mod errors;
 mod internal;
 pub mod query;
+pub mod sessions;
 #[cfg(feature = "testing")]
 pub mod testing;
 pub mod types;
@@ -244,17 +245,29 @@ pub mod version;
 
 // Re-export commonly used types
 pub use errors::{ClaudeError, ImageValidationError, Result};
+pub use sessions::{
+    ForkSessionResult, ListSessionsOptions, SDKSessionInfo, SessionMessage, SessionSortOrder,
+    delete_session, fork_session, get_session_info, get_session_messages, get_subagent_messages,
+    list_sessions, list_subagents, rename_session, tag_session,
+};
 pub use types::{
     config::*,
+    context::{ApiUsage, ContextUsageCategory, ContextUsageResponse, MessageBreakdown},
     efficiency::{EfficiencyConfig, ExecutionMetrics, MetricsSummary},
     hooks::*,
     mcp::{
-        McpServerConfig, McpServers, SdkMcpServer, SdkMcpTool, ToolHandler, ToolResult,
+        McpServerConfig, McpServerConnectionStatus, McpServerInfo, McpServerStatus,
+        McpServers, McpStatusResponse, McpToolAnnotations, McpToolInfo,
+        SdkMcpServer, SdkMcpTool, ToolHandler, ToolResult,
         ToolResultContent as McpToolResultContent, create_sdk_mcp_server,
     },
     messages::*,
     permissions::*,
     plugin::*,
+    session_store::{
+        InMemorySessionStore, SessionKey, SessionListSubkeysKey, SessionStore,
+        SessionStoreEntry, SessionStoreListEntry, project_key_for_directory,
+    },
 };
 
 // Re-export public API

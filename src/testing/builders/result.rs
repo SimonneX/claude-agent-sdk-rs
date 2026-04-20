@@ -91,6 +91,11 @@ impl ResultMessageBuilder {
             usage: None,
             result: self.result,
             structured_output: None,
+            stop_reason: None,
+            model_usage: None,
+            permission_denials: None,
+            errors: None,
+            uuid: None,
         })
     }
 

@@ -147,10 +147,14 @@ impl ClaudeClient {
         match event {
             HookEvent::PreToolUse => "PreToolUse",
             HookEvent::PostToolUse => "PostToolUse",
+            HookEvent::PostToolUseFailure => "PostToolUseFailure",
             HookEvent::UserPromptSubmit => "UserPromptSubmit",
             HookEvent::Stop => "Stop",
+            HookEvent::SubagentStart => "SubagentStart",
             HookEvent::SubagentStop => "SubagentStop",
             HookEvent::PreCompact => "PreCompact",
+            HookEvent::Notification => "Notification",
+            HookEvent::PermissionRequest => "PermissionRequest",
         }
         .to_string()
     }
@@ -858,6 +862,128 @@ impl ClaudeClient {
         }
 
         Ok(())
+    }
+
+    /// Get MCP server connection status for all configured servers
+    ///
+    /// # Returns
+    ///
+    /// A `McpStatusResponse` containing status information for each MCP server.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the client is not connected or if the request fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use claude_agent_sdk_rs::{ClaudeClient, ClaudeAgentOptions};
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let mut client = ClaudeClient::new(ClaudeAgentOptions::default());
+    /// # client.connect().await?;
+    /// let status = client.get_mcp_status().await?;
+    /// for server in status.mcp_servers {
+    ///     println!("Server {} status: {}", server.name, server.status);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn get_mcp_status(&self) -> Result<crate::types::mcp::McpStatusResponse> {
+        let query = self.query.as_ref().ok_or_else(|| {
+            ClaudeError::InvalidConfig("Client not connected. Call connect() first.".to_string())
+        })?;
+
+        query.get_mcp_status().await
+    }
+
+    /// Reconnect a failed MCP server
+    ///
+    /// # Arguments
+    ///
+    /// * `server_name` - Name of the MCP server to reconnect
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the client is not connected or if the request fails.
+    pub async fn reconnect_mcp_server(&self, server_name: &str) -> Result<()> {
+        let query = self.query.as_ref().ok_or_else(|| {
+            ClaudeError::InvalidConfig("Client not connected. Call connect() first.".to_string())
+        })?;
+
+        query.reconnect_mcp_server(server_name).await
+    }
+
+    /// Enable or disable an MCP server
+    ///
+    /// # Arguments
+    ///
+    /// * `server_name` - Name of the MCP server to toggle
+    /// * `enabled` - Whether to enable (true) or disable (false) the server
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the client is not connected or if the request fails.
+    pub async fn toggle_mcp_server(&self, server_name: &str, enabled: bool) -> Result<()> {
+        let query = self.query.as_ref().ok_or_else(|| {
+            ClaudeError::InvalidConfig("Client not connected. Call connect() first.".to_string())
+        })?;
+
+        query.toggle_mcp_server(server_name, enabled).await
+    }
+
+    /// Stop a running task
+    ///
+    /// # Arguments
+    ///
+    /// * `task_id` - ID of the task to stop
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the client is not connected or if the request fails.
+    pub async fn stop_task(&self, task_id: &str) -> Result<()> {
+        let query = self.query.as_ref().ok_or_else(|| {
+            ClaudeError::InvalidConfig("Client not connected. Call connect() first.".to_string())
+        })?;
+
+        query.stop_task(task_id).await
+    }
+
+    /// Get context window usage breakdown
+    ///
+    /// # Returns
+    ///
+    /// A `ContextUsageResponse` containing:
+    /// - Token usage by category
+    /// - Total and max tokens
+    /// - Memory files, MCP tools, agents
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the client is not connected or if the request fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use claude_agent_sdk_rs::{ClaudeClient, ClaudeAgentOptions};
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let mut client = ClaudeClient::new(ClaudeAgentOptions::default());
+    /// # client.connect().await?;
+    /// let usage = client.get_context_usage().await?;
+    /// println!("Context usage: {}%", usage.percentage);
+    /// for category in usage.categories {
+    ///     println!("  {}: {} tokens", category.name, category.tokens);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn get_context_usage(&self) -> Result<crate::types::context::ContextUsageResponse> {
+        let query = self.query.as_ref().ok_or_else(|| {
+            ClaudeError::InvalidConfig("Client not connected. Call connect() first.".to_string())
+        })?;
+
+        query.get_context_usage().await
     }
 }
 
