@@ -98,6 +98,15 @@ pub struct PreToolUseHookInput {
     pub tool_name: String,
     /// Tool input parameters
     pub tool_input: serde_json::Value,
+    /// Tool use ID (unique identifier for this tool invocation)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    /// Agent ID (if running within a subagent)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    /// Agent type (if running within a subagent)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_type: Option<String>,
 }
 
 /// Post-tool-use hook input
@@ -118,6 +127,15 @@ pub struct PostToolUseHookInput {
     pub tool_input: serde_json::Value,
     /// Tool response (output from the tool)
     pub tool_response: serde_json::Value,
+    /// Tool use ID (unique identifier for this tool invocation)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    /// Agent ID (if running within a subagent)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    /// Agent type (if running within a subagent)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_type: Option<String>,
 }
 
 /// User-prompt-submit hook input
@@ -210,6 +228,12 @@ pub struct PostToolUseFailureHookInput {
     /// Whether the failure was due to an interrupt
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_interrupt: Option<bool>,
+    /// Agent ID (if running within a subagent)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    /// Agent type (if running within a subagent)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_type: Option<String>,
 }
 
 /// Subagent-start hook input
@@ -270,6 +294,15 @@ pub struct PermissionRequestHookInput {
     /// Permission suggestions from Claude
     #[serde(skip_serializing_if = "Option::is_none")]
     pub permission_suggestions: Option<serde_json::Value>,
+    /// Tool use ID (unique identifier for this tool invocation)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    /// Agent ID (if running within a subagent)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    /// Agent type (if running within a subagent)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_type: Option<String>,
 }
 
 /// Hook context passed to callbacks
@@ -363,6 +396,8 @@ pub enum HookSpecificOutput {
     PostToolUseFailure(PostToolUseFailureHookSpecificOutput),
     /// User-prompt-submit specific output
     UserPromptSubmit(UserPromptSubmitHookSpecificOutput),
+    /// Session-start specific output
+    SessionStart(SessionStartHookSpecificOutput),
     /// Subagent-start specific output
     SubagentStart(SubagentStartHookSpecificOutput),
     /// Notification specific output
@@ -425,6 +460,22 @@ pub struct UserPromptSubmitHookSpecificOutput {
 }
 
 impl Default for UserPromptSubmitHookSpecificOutput {
+    fn default() -> Self {
+        Self::builder().build()
+    }
+}
+
+/// Session-start hook specific output
+#[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
+#[builder(doc)]
+pub struct SessionStartHookSpecificOutput {
+    /// Additional context to provide to Claude
+    #[serde(skip_serializing_if = "Option::is_none", rename = "additionalContext")]
+    #[builder(default, setter(into, strip_option))]
+    pub additional_context: Option<String>,
+}
+
+impl Default for SessionStartHookSpecificOutput {
     fn default() -> Self {
         Self::builder().build()
     }
@@ -550,7 +601,10 @@ mod tests {
             "cwd": "/working/dir",
             "permission_mode": "default",
             "tool_name": "Bash",
-            "tool_input": {"command": "echo hello"}
+            "tool_input": {"command": "echo hello"},
+            "tool_use_id": "tool-123",
+            "agent_id": "agent-456",
+            "agent_type": "research"
         }"#;
 
         let input: HookInput = serde_json::from_str(json_str).unwrap();
@@ -559,6 +613,32 @@ mod tests {
                 assert_eq!(pre_tool.session_id, "test-session");
                 assert_eq!(pre_tool.tool_name, "Bash");
                 assert_eq!(pre_tool.tool_input["command"], "echo hello");
+                assert_eq!(pre_tool.tool_use_id, Some("tool-123".to_string()));
+                assert_eq!(pre_tool.agent_id, Some("agent-456".to_string()));
+                assert_eq!(pre_tool.agent_type, Some("research".to_string()));
+            }
+            _ => panic!("Expected PreToolUse variant"),
+        }
+    }
+
+    #[test]
+    fn test_pretooluse_hook_input_without_agent_fields() {
+        let json_str = r#"{
+            "hook_event_name": "PreToolUse",
+            "session_id": "test-session",
+            "transcript_path": "/path/to/transcript",
+            "cwd": "/working/dir",
+            "tool_name": "Bash",
+            "tool_input": {"command": "echo hello"}
+        }"#;
+
+        let input: HookInput = serde_json::from_str(json_str).unwrap();
+        match input {
+            HookInput::PreToolUse(pre_tool) => {
+                assert_eq!(pre_tool.session_id, "test-session");
+                assert!(pre_tool.tool_use_id.is_none());
+                assert!(pre_tool.agent_id.is_none());
+                assert!(pre_tool.agent_type.is_none());
             }
             _ => panic!("Expected PreToolUse variant"),
         }
@@ -573,7 +653,10 @@ mod tests {
             "cwd": "/working/dir",
             "tool_name": "Bash",
             "tool_input": {"command": "echo hello"},
-            "tool_response": "hello\n"
+            "tool_response": "hello\n",
+            "tool_use_id": "tool-123",
+            "agent_id": "agent-456",
+            "agent_type": "research"
         }"#;
 
         let input: HookInput = serde_json::from_str(json_str).unwrap();
@@ -582,6 +665,9 @@ mod tests {
                 assert_eq!(post_tool.session_id, "test-session");
                 assert_eq!(post_tool.tool_name, "Bash");
                 assert_eq!(post_tool.tool_response, "hello\n");
+                assert_eq!(post_tool.tool_use_id, Some("tool-123".to_string()));
+                assert_eq!(post_tool.agent_id, Some("agent-456".to_string()));
+                assert_eq!(post_tool.agent_type, Some("research".to_string()));
             }
             _ => panic!("Expected PostToolUse variant"),
         }
@@ -663,7 +749,9 @@ mod tests {
             "tool_input": {"command": "echo hello"},
             "tool_use_id": "tool-123",
             "error": "Command failed",
-            "is_interrupt": false
+            "is_interrupt": false,
+            "agent_id": "agent-456",
+            "agent_type": "research"
         }"#;
 
         let input: HookInput = serde_json::from_str(json_str).unwrap();
@@ -673,6 +761,8 @@ mod tests {
                 assert_eq!(failure.tool_name, "Bash");
                 assert_eq!(failure.error, "Command failed");
                 assert_eq!(failure.is_interrupt, Some(false));
+                assert_eq!(failure.agent_id, Some("agent-456".to_string()));
+                assert_eq!(failure.agent_type, Some("research".to_string()));
             }
             _ => panic!("Expected PostToolUseFailure variant"),
         }
@@ -733,7 +823,10 @@ mod tests {
             "cwd": "/working/dir",
             "tool_name": "Write",
             "tool_input": {"file_path": "/tmp/test.txt"},
-            "permission_suggestions": {"behavior": "allow"}
+            "permission_suggestions": {"behavior": "allow"},
+            "tool_use_id": "tool-123",
+            "agent_id": "agent-456",
+            "agent_type": "research"
         }"#;
 
         let input: HookInput = serde_json::from_str(json_str).unwrap();
@@ -742,6 +835,32 @@ mod tests {
                 assert_eq!(request.session_id, "test-session");
                 assert_eq!(request.tool_name, "Write");
                 assert!(request.permission_suggestions.is_some());
+                assert_eq!(request.tool_use_id, Some("tool-123".to_string()));
+                assert_eq!(request.agent_id, Some("agent-456".to_string()));
+                assert_eq!(request.agent_type, Some("research".to_string()));
+            }
+            _ => panic!("Expected PermissionRequest variant"),
+        }
+    }
+
+    #[test]
+    fn test_permission_request_hook_input_without_agent_fields() {
+        let json_str = r#"{
+            "hook_event_name": "PermissionRequest",
+            "session_id": "test-session",
+            "transcript_path": "/path/to/transcript",
+            "cwd": "/working/dir",
+            "tool_name": "Write",
+            "tool_input": {"file_path": "/tmp/test.txt"}
+        }"#;
+
+        let input: HookInput = serde_json::from_str(json_str).unwrap();
+        match input {
+            HookInput::PermissionRequest(request) => {
+                assert_eq!(request.session_id, "test-session");
+                assert!(request.tool_use_id.is_none());
+                assert!(request.agent_id.is_none());
+                assert!(request.agent_type.is_none());
             }
             _ => panic!("Expected PermissionRequest variant"),
         }
@@ -794,6 +913,17 @@ mod tests {
         let json = serde_json::to_value(&output).unwrap();
         assert_eq!(json["hookEventName"], "UserPromptSubmit");
         assert_eq!(json["additionalContext"], "Custom context");
+    }
+
+    #[test]
+    fn test_hook_specific_output_sessionstart_serialization() {
+        let output = HookSpecificOutput::SessionStart(SessionStartHookSpecificOutput {
+            additional_context: Some("Session initialized".to_string()),
+        });
+
+        let json = serde_json::to_value(&output).unwrap();
+        assert_eq!(json["hookEventName"], "SessionStart");
+        assert_eq!(json["additionalContext"], "Session initialized");
     }
 
     #[test]
@@ -1252,6 +1382,9 @@ mod tests {
             permission_mode: None,
             tool_name: "Bash".to_string(),
             tool_input: serde_json::json!({"command": "ls"}),
+            tool_use_id: None,
+            agent_id: None,
+            agent_type: None,
         });
 
         let result = hook_callback(input, None, HookContext::default()).await;
@@ -1289,6 +1422,9 @@ mod tests {
             permission_mode: None,
             tool_name: "Bash".to_string(),
             tool_input: serde_json::json!({"command": "ls"}),
+            tool_use_id: None,
+            agent_id: None,
+            agent_type: None,
         });
 
         let result = hook_callback(input, None, HookContext::default()).await;

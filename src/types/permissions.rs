@@ -18,6 +18,10 @@ pub struct ToolPermissionContext {
     pub signal: Option<()>,
     /// Permission suggestions from Claude
     pub suggestions: Vec<PermissionUpdate>,
+    /// Tool use ID (unique identifier for this tool invocation)
+    pub tool_use_id: Option<String>,
+    /// Agent ID (if running within a subagent)
+    pub agent_id: Option<String>,
 }
 
 /// Result of a permission check
@@ -142,6 +146,35 @@ pub enum PermissionUpdateDestination {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn test_tool_permission_context_default() {
+        let ctx = ToolPermissionContext::default();
+        assert!(ctx.signal.is_none());
+        assert!(ctx.suggestions.is_empty());
+        assert!(ctx.tool_use_id.is_none());
+        assert!(ctx.agent_id.is_none());
+    }
+
+    #[test]
+    fn test_tool_permission_context_with_fields() {
+        let ctx = ToolPermissionContext {
+            signal: None,
+            suggestions: vec![PermissionUpdate {
+                type_: PermissionUpdateType::SetMode,
+                mode: Some(crate::types::config::PermissionMode::AcceptEdits),
+                rules: None,
+                behavior: None,
+                directories: None,
+                destination: None,
+            }],
+            tool_use_id: Some("tool-123".to_string()),
+            agent_id: Some("agent-456".to_string()),
+        };
+        assert_eq!(ctx.tool_use_id, Some("tool-123".to_string()));
+        assert_eq!(ctx.agent_id, Some("agent-456".to_string()));
+        assert_eq!(ctx.suggestions.len(), 1);
+    }
 
     #[test]
     fn test_permission_behavior_serialization() {

@@ -60,6 +60,9 @@ pub enum Message {
     /// Rate limit event
     #[serde(rename = "rate_limit")]
     RateLimit(RateLimitEvent),
+    /// Mirror error message
+    #[serde(rename = "mirror_error")]
+    MirrorError(MirrorErrorMessage),
 }
 
 /// User message
@@ -77,6 +80,9 @@ pub struct UserMessage {
     /// Parent tool use ID (if this is a tool result)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_tool_use_id: Option<String>,
+    /// Tool use result (if this message contains tool result data)
+    #[serde(skip_serializing_if = "Option::is_none", rename = "tool_use_result")]
+    pub tool_use_result: Option<serde_json::Value>,
     /// Additional fields
     #[serde(flatten)]
     pub extra: serde_json::Value,
@@ -397,6 +403,28 @@ pub enum RateLimitType {
     SevenDaySonnet,
     /// Overage
     Overage,
+}
+
+/// Mirror error message (used when session mirroring fails)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MirrorErrorMessage {
+    /// Session key (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<SessionKey>,
+    /// Error message
+    pub error: String,
+}
+
+/// Session key for identifying a session
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionKey {
+    /// Project key (derived from directory)
+    pub project_key: String,
+    /// Session ID
+    pub session_id: String,
+    /// Subpath (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subpath: Option<String>,
 }
 
 /// Content block types
@@ -1089,5 +1117,103 @@ mod tests {
         let status = TaskNotificationStatus::Failed;
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json, "failed");
+    }
+
+    #[test]
+    fn test_mirror_error_message_deserialization() {
+        let json_str = r#"{
+            "type": "mirror_error",
+            "key": {
+                "project_key": "project-1",
+                "session_id": "session-1",
+                "subpath": "subagent-1"
+            },
+            "error": "Session mirroring failed"
+        }"#;
+
+        let msg: Message = serde_json::from_str(json_str).unwrap();
+        match msg {
+            Message::MirrorError(mirror) => {
+                assert!(mirror.key.is_some());
+                let key = mirror.key.unwrap();
+                assert_eq!(key.project_key, "project-1");
+                assert_eq!(key.session_id, "session-1");
+                assert_eq!(key.subpath, Some("subagent-1".to_string()));
+                assert_eq!(mirror.error, "Session mirroring failed");
+            }
+            _ => panic!("Expected MirrorError variant"),
+        }
+    }
+
+    #[test]
+    fn test_mirror_error_message_without_key() {
+        let json_str = r#"{
+            "type": "mirror_error",
+            "error": "Connection lost"
+        }"#;
+
+        let msg: Message = serde_json::from_str(json_str).unwrap();
+        match msg {
+            Message::MirrorError(mirror) => {
+                assert!(mirror.key.is_none());
+                assert_eq!(mirror.error, "Connection lost");
+            }
+            _ => panic!("Expected MirrorError variant"),
+        }
+    }
+
+    #[test]
+    fn test_session_key_serialization() {
+        let key = SessionKey {
+            project_key: "project-1".to_string(),
+            session_id: "session-1".to_string(),
+            subpath: None,
+        };
+
+        let json = serde_json::to_value(&key).unwrap();
+        assert_eq!(json["project_key"], "project-1");
+        assert_eq!(json["session_id"], "session-1");
+        assert!(json.get("subpath").is_none());
+    }
+
+    #[test]
+    fn test_user_message_with_tool_use_result() {
+        let json_str = r#"{
+            "type": "user",
+            "text": "Here is the result",
+            "uuid": "user-123",
+            "parent_tool_use_id": "tool-456",
+            "tool_use_result": {
+                "status": "success",
+                "output": "file created"
+            }
+        }"#;
+
+        let msg: Message = serde_json::from_str(json_str).unwrap();
+        match msg {
+            Message::User(user) => {
+                assert_eq!(user.text, Some("Here is the result".to_string()));
+                assert_eq!(user.uuid, Some("user-123".to_string()));
+                assert_eq!(user.parent_tool_use_id, Some("tool-456".to_string()));
+                assert!(user.tool_use_result.is_some());
+            }
+            _ => panic!("Expected User variant"),
+        }
+    }
+
+    #[test]
+    fn test_user_message_without_tool_use_result() {
+        let json_str = r#"{
+            "type": "user",
+            "text": "Simple message"
+        }"#;
+
+        let msg: Message = serde_json::from_str(json_str).unwrap();
+        match msg {
+            Message::User(user) => {
+                assert!(user.tool_use_result.is_none());
+            }
+            _ => panic!("Expected User variant"),
+        }
     }
 }
