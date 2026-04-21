@@ -3,6 +3,26 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 ---
+## [Unreleased] — Python SDK v0.1.63 alignment
+
+### Features
+
+- **(types)** Add `PermissionMode::DontAsk` and `PermissionMode::Auto` variants (Python v0.1.57). Both are now wired through `set_permission_mode()` and the CLI `--permission-mode` flag.
+- **(types)** Add `SystemPrompt::File(SystemPromptFile)` variant (Python v0.1.51). Serializes as `{"type":"file","path":...}` and is forwarded to the CLI as `--system-prompt-file <path>`.
+- **(types)** Add `exclude_dynamic_sections: Option<bool>` field on `SystemPromptPreset` (Python v0.1.57), with builder helper `with_exclude_dynamic_sections(...)`.
+- **(types)** Add `ClaudeAgentOptions::session_id` (Python v0.1.52) — pre-assigns the session id for a NEW session; distinct from `resume`, which re-opens an existing one. Wired to the CLI as `--session-id <id>`.
+- **(types)** Replace `skills: Vec<String>` with `skills: Option<Skills>` enum supporting both `Skills::All` and `Skills::List(Vec<String>)` (Python v0.1.62). The skills option is now actually wired through to the CLI's `--allowedTools` (previously a no-op): `Skills::All` adds the bare `Skill` tool; `Skills::List` adds `Skill(name)` per entry.
+
+### Bug Fixes
+
+- **(transport)** `options.skills` was previously declared but never wired to the CLI argv. It is now folded into `--allowedTools` matching Python SDK `_apply_skills_defaults` semantics.
+
+### Notes
+
+- The `skills` field type changed from `Vec<String>` to `Option<Skills>`. Callers passing `vec![...]` continue to work via the existing `From<Vec<String>>` impl on `Skills`.
+- `add_mcp_server()` / `remove_mcp_server()` are NOT added in this release. They appear in the Python v0.1.46 changelog but are not actually present in the Python v0.1.63 source.
+
+---
 ## [0.6.4](https://github.com/compare/v0.6.3..v0.6.4) - 2026-02-09
 
 ### Features

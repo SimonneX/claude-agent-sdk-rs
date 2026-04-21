@@ -223,7 +223,7 @@
 //!
 //! ## Examples
 //!
-//! The SDK includes 22 comprehensive examples covering all features. See the
+//! The SDK includes 26 comprehensive examples covering all features. See the
 //! [examples directory](https://github.com/yourusername/claude-agent-sdk-rs/tree/master/examples)
 //! for detailed usage patterns.
 //!
@@ -231,7 +231,7 @@
 //!
 //! - [README](https://github.com/yourusername/claude-agent-sdk-rs/blob/master/README.md) - Getting started
 //! - [Plugin Guide](https://github.com/yourusername/claude-agent-sdk-rs/blob/master/PLUGIN_GUIDE.md) - Plugin development
-//! - [Examples](https://github.com/yourusername/claude-agent-sdk-rs/tree/master/examples) - 22 working examples
+//! - [Examples](https://github.com/yourusername/claude-agent-sdk-rs/tree/master/examples) - 26 working examples
 
 pub mod client;
 pub mod errors;

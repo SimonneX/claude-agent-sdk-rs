@@ -1,6 +1,6 @@
 # Claude Agent SDK Examples
 
-This directory contains 22 comprehensive examples demonstrating all features of the Claude Agent SDK for Rust. Each example is fully documented and runnable.
+This directory contains 26 comprehensive examples demonstrating all features of the Claude Agent SDK for Rust. Each example is fully documented and runnable.
 
 ## Quick Start
 
@@ -34,6 +34,21 @@ Production-ready features.
 
 ### 🔌 Plugin System (Examples 21-22)
 Custom plugin loading and integration.
+
+### 🖼️ Multimodal & Efficiency (Examples 23-24)
+Image input and built-in efficiency hooks.
+
+### 🧠 Skills (Example 25)
+The `skills` option (`Skills::All` / `Skills::List`), folded into `--allowedTools`.
+
+### 📁 Filesystem Agents (Example 26)
+Loading agents from `.claude/agents/*.md` files via `setting_sources(["project"])` (Python SDK `filesystem_agents.py` parity).
+
+### Recent v0.1.63 alignment additions
+Other v0.1.63 features are folded into the relevant existing examples:
+- `SystemPrompt::File` and `SystemPromptPreset::with_exclude_dynamic_sections` → `13_system_prompt.rs`
+- `session_id` startup option (vs `resume`) → `16_session_management.rs`
+- New `PermissionMode::DontAsk` / `PermissionMode::Auto` variants → noted in `04_permission_callbacks.rs`
 
 ## Learning Path
 

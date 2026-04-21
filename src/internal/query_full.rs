@@ -430,6 +430,8 @@ impl QueryFull {
             crate::types::config::PermissionMode::AcceptEdits => "acceptEdits",
             crate::types::config::PermissionMode::Plan => "plan",
             crate::types::config::PermissionMode::BypassPermissions => "bypassPermissions",
+            crate::types::config::PermissionMode::DontAsk => "dontAsk",
+            crate::types::config::PermissionMode::Auto => "auto",
         };
 
         let request = json!({

@@ -37,6 +37,10 @@ pub struct ClaudeAgentOptions {
     /// Session ID to resume
     #[builder(default, setter(into, strip_option))]
     pub resume: Option<String>,
+    /// Pre-assigned session id for a NEW session (distinct from `resume`,
+    /// which re-opens an existing one). Mirrors Python SDK v0.1.52 `session_id`.
+    #[builder(default, setter(into, strip_option))]
+    pub session_id: Option<String>,
     /// Maximum number of turns
     #[builder(default, setter(strip_option))]
     pub max_turns: Option<u32>,
@@ -162,9 +166,12 @@ pub struct ClaudeAgentOptions {
     #[builder(default, setter(strip_option))]
     pub efficiency: Option<EfficiencyConfig>,
 
-    /// Skills to enable
-    #[builder(default, setter(into))]
-    pub skills: Vec<String>,
+    /// Skills to enable. Use `Skills::All` to enable every skill, or
+    /// `Skills::List(vec![...])` for a specific subset. `None` (default)
+    /// leaves skills untouched. Mirrors Python SDK v0.1.62
+    /// `skills: list[str] | Literal["all"] | None`.
+    #[builder(default, setter(into, strip_option))]
+    pub skills: Option<Skills>,
 
     /// Thinking configuration (structured, not just max_tokens)
     #[builder(default, setter(strip_option))]
@@ -197,6 +204,8 @@ pub enum SystemPrompt {
     Text(String),
     /// Preset-based prompt
     Preset(SystemPromptPreset),
+    /// Load system prompt from a file on disk
+    File(SystemPromptFile),
 }
 
 impl From<String> for SystemPrompt {
@@ -211,6 +220,18 @@ impl From<&str> for SystemPrompt {
     }
 }
 
+impl From<SystemPromptPreset> for SystemPrompt {
+    fn from(preset: SystemPromptPreset) -> Self {
+        SystemPrompt::Preset(preset)
+    }
+}
+
+impl From<SystemPromptFile> for SystemPrompt {
+    fn from(file: SystemPromptFile) -> Self {
+        SystemPrompt::File(file)
+    }
+}
+
 /// System prompt preset
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemPromptPreset {
@@ -222,6 +243,10 @@ pub struct SystemPromptPreset {
     /// Text to append to the preset
     #[serde(skip_serializing_if = "Option::is_none")]
     pub append: Option<String>,
+    /// Strip per-user dynamic sections (env, cwd, etc.) injected by the preset.
+    /// Mirrors Python SDK v0.1.57 `exclude_dynamic_sections`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exclude_dynamic_sections: Option<bool>,
 }
 
 impl SystemPromptPreset {
@@ -231,6 +256,7 @@ impl SystemPromptPreset {
             type_: "preset".to_string(),
             preset: preset.into(),
             append: None,
+            exclude_dynamic_sections: None,
         }
     }
 
@@ -240,6 +266,36 @@ impl SystemPromptPreset {
             type_: "preset".to_string(),
             preset: preset.into(),
             append: Some(append.into()),
+            exclude_dynamic_sections: None,
+        }
+    }
+
+    /// Set the `exclude_dynamic_sections` flag (chainable).
+    pub fn with_exclude_dynamic_sections(mut self, exclude: bool) -> Self {
+        self.exclude_dynamic_sections = Some(exclude);
+        self
+    }
+}
+
+/// System prompt loaded from a file on disk.
+///
+/// Mirrors Python SDK v0.1.51 `SystemPromptFile`. Serializes to
+/// `{ "type": "file", "path": "..." }`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemPromptFile {
+    /// Type field (always "file")
+    #[serde(rename = "type")]
+    pub type_: String,
+    /// Path to the system prompt file
+    pub path: String,
+}
+
+impl SystemPromptFile {
+    /// Create a new file-based system prompt config.
+    pub fn new(path: impl Into<String>) -> Self {
+        Self {
+            type_: "file".to_string(),
+            path: path.into(),
         }
     }
 }
@@ -258,6 +314,11 @@ pub enum PermissionMode {
     Plan,
     /// Bypass all permissions
     BypassPermissions,
+    /// Suppress permission prompts entirely (no asking, no auto-accept)
+    DontAsk,
+    /// Automatic permission decisions (added in CLI/SDK v0.1.57)
+    #[serde(rename = "auto")]
+    Auto,
 }
 
 /// Controls which filesystem-based configuration sources the SDK loads settings from.
@@ -383,6 +444,52 @@ impl Default for ThinkingConfig {
 pub struct TaskBudget {
     /// Total budget
     pub total: f64,
+}
+
+/// Skills configuration. Either every skill (`All`) or an explicit subset.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum Skills {
+    /// Enable all skills (serializes as the string `"all"`).
+    #[serde(with = "skills_all_serde")]
+    All,
+    /// Enable a specific list of skills by name.
+    List(Vec<String>),
+}
+
+mod skills_all_serde {
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+
+    pub fn serialize<S: Serializer>(s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str("all")
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<(), D::Error> {
+        let value = String::deserialize(d)?;
+        if value == "all" {
+            Ok(())
+        } else {
+            Err(D::Error::custom(format!("expected \"all\", got {:?}", value)))
+        }
+    }
+}
+
+impl From<Vec<String>> for Skills {
+    fn from(list: Vec<String>) -> Self {
+        Skills::List(list)
+    }
+}
+
+impl From<Vec<&str>> for Skills {
+    fn from(list: Vec<&str>) -> Self {
+        Skills::List(list.into_iter().map(String::from).collect())
+    }
+}
+
+impl<const N: usize> From<[&str; N]> for Skills {
+    fn from(arr: [&str; N]) -> Self {
+        Skills::List(arr.into_iter().map(String::from).collect())
+    }
 }
 
 /// Tools configuration
@@ -769,10 +876,94 @@ mod tests {
             .load_timeout_ms(30000)
             .build();
 
-        assert_eq!(options.skills, vec!["skill1"]);
+        assert_eq!(
+            options.skills,
+            Some(Skills::List(vec!["skill1".to_string()]))
+        );
         assert!(options.thinking.is_some());
         assert_eq!(options.effort, Some("high".to_string()));
         assert!(options.task_budget.is_some());
         assert_eq!(options.load_timeout_ms, Some(30000));
+    }
+
+    #[test]
+    fn test_permission_mode_new_variants_serde() {
+        assert_eq!(
+            serde_json::to_string(&PermissionMode::DontAsk).unwrap(),
+            "\"dontAsk\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PermissionMode::Auto).unwrap(),
+            "\"auto\""
+        );
+        let dont_ask: PermissionMode = serde_json::from_str("\"dontAsk\"").unwrap();
+        assert_eq!(dont_ask, PermissionMode::DontAsk);
+        let auto: PermissionMode = serde_json::from_str("\"auto\"").unwrap();
+        assert_eq!(auto, PermissionMode::Auto);
+    }
+
+    #[test]
+    fn test_system_prompt_file_serde() {
+        let sp = SystemPrompt::File(SystemPromptFile::new("/etc/prompt.md"));
+        let json = serde_json::to_value(&sp).unwrap();
+        assert_eq!(json["type"], "file");
+        assert_eq!(json["path"], "/etc/prompt.md");
+    }
+
+    #[test]
+    fn test_system_prompt_preset_exclude_dynamic_sections_omitted_by_default() {
+        let preset = SystemPromptPreset::new("claude_code");
+        let json = serde_json::to_value(&preset).unwrap();
+        assert!(json.get("exclude_dynamic_sections").is_none());
+    }
+
+    #[test]
+    fn test_system_prompt_preset_exclude_dynamic_sections_set() {
+        let preset = SystemPromptPreset::new("claude_code").with_exclude_dynamic_sections(true);
+        let json = serde_json::to_value(&preset).unwrap();
+        assert_eq!(json["exclude_dynamic_sections"], true);
+    }
+
+    #[test]
+    fn test_session_id_field() {
+        let options = ClaudeAgentOptions::builder()
+            .session_id("abc-123")
+            .build();
+        assert_eq!(options.session_id, Some("abc-123".to_string()));
+        assert!(options.resume.is_none());
+    }
+
+    #[test]
+    fn test_skills_all_serializes_as_string() {
+        let skills = Skills::All;
+        let json = serde_json::to_value(&skills).unwrap();
+        assert_eq!(json, serde_json::json!("all"));
+
+        let parsed: Skills = serde_json::from_value(serde_json::json!("all")).unwrap();
+        assert_eq!(parsed, Skills::All);
+    }
+
+    #[test]
+    fn test_skills_list_serializes_as_array() {
+        let skills = Skills::List(vec!["a".to_string(), "b".to_string()]);
+        let json = serde_json::to_value(&skills).unwrap();
+        assert_eq!(json, serde_json::json!(["a", "b"]));
+    }
+
+    #[test]
+    fn test_skills_via_builder_from_vec() {
+        let options = ClaudeAgentOptions::builder()
+            .skills(vec!["x", "y"])
+            .build();
+        assert_eq!(
+            options.skills,
+            Some(Skills::List(vec!["x".to_string(), "y".to_string()]))
+        );
+    }
+
+    #[test]
+    fn test_skills_via_builder_all() {
+        let options = ClaudeAgentOptions::builder().skills(Skills::All).build();
+        assert_eq!(options.skills, Some(Skills::All));
     }
 }

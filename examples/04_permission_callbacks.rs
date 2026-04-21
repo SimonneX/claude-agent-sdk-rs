@@ -144,6 +144,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Configure options with permission callback
     // Note: Use `tools` to restrict available tools (not `allowed_tools`)
+    //
+    // `permission_mode` accepts six variants (matches Python SDK v0.1.63):
+    //   - PermissionMode::Default            — default behavior
+    //   - PermissionMode::AcceptEdits        — auto-accept file edits
+    //   - PermissionMode::Plan               — plan mode (read-only)
+    //   - PermissionMode::BypassPermissions  — skip all permission prompts
+    //   - PermissionMode::DontAsk            — suppress prompts entirely
+    //   - PermissionMode::Auto               — automatic decisions (v0.1.57+)
     let options = ClaudeAgentOptions {
         tools: Some(["Write", "Read", "Bash"].into()),
         model: Some("sonnet".to_string()), // Use Sonnet for lower cost

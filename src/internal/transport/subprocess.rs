@@ -292,6 +292,10 @@ impl SubprocessTransport {
                     }
                     // Note: preset.preset field is ignored - CLI uses default prompt
                 }
+                crate::types::config::SystemPrompt::File(file) => {
+                    args.push("--system-prompt-file".to_string());
+                    args.push(file.path.clone());
+                }
             }
         }
 
@@ -322,15 +326,38 @@ impl SubprocessTransport {
                 crate::types::config::PermissionMode::AcceptEdits => "acceptEdits",
                 crate::types::config::PermissionMode::Plan => "plan",
                 crate::types::config::PermissionMode::BypassPermissions => "bypassPermissions",
+                crate::types::config::PermissionMode::DontAsk => "dontAsk",
+                crate::types::config::PermissionMode::Auto => "auto",
             };
             args.push("--permission-mode".to_string());
             args.push(mode_str.to_string());
         }
 
-        // Add allowed tools (Python SDK uses --allowedTools with comma-separated values)
-        if !self.options.allowed_tools.is_empty() {
+        // Add allowed tools (Python SDK uses --allowedTools with comma-separated values).
+        // Also fold in skills: `Skills::All` adds the bare "Skill" tool, and
+        // `Skills::List` adds `Skill(name)` per entry — matching Python SDK
+        // `_apply_skills_defaults` semantics.
+        let mut effective_allowed_tools: Vec<String> = self.options.allowed_tools.clone();
+        if let Some(ref skills) = self.options.skills {
+            match skills {
+                crate::types::config::Skills::All => {
+                    if !effective_allowed_tools.iter().any(|t| t == "Skill") {
+                        effective_allowed_tools.push("Skill".to_string());
+                    }
+                }
+                crate::types::config::Skills::List(names) => {
+                    for name in names {
+                        let pattern = format!("Skill({})", name);
+                        if !effective_allowed_tools.iter().any(|t| t == &pattern) {
+                            effective_allowed_tools.push(pattern);
+                        }
+                    }
+                }
+            }
+        }
+        if !effective_allowed_tools.is_empty() {
             args.push("--allowedTools".to_string());
-            args.push(self.options.allowed_tools.join(","));
+            args.push(effective_allowed_tools.join(","));
         }
 
         // Add disallowed tools (Python SDK uses --disallowedTools with comma-separated values)
@@ -402,6 +429,12 @@ impl SubprocessTransport {
         // Add resume session
         if let Some(ref session_id) = self.options.resume {
             args.push("--resume".to_string());
+            args.push(session_id.clone());
+        }
+
+        // Pre-assign session id for a new session (distinct from --resume)
+        if let Some(ref session_id) = self.options.session_id {
+            args.push("--session-id".to_string());
             args.push(session_id.clone());
         }
 

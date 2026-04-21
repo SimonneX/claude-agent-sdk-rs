@@ -358,7 +358,7 @@ The SDK provides strongly-typed Rust interfaces for all Claude interactions:
 
 ## Examples
 
-The SDK includes **24 comprehensive examples** demonstrating all features with 100% parity to Python SDK. See [examples/README.md](examples/README.md) for details.
+The SDK includes **26 comprehensive examples** demonstrating all features with parity to Python SDK v0.1.63. See [examples/README.md](examples/README.md) for details.
 
 ### Quick Examples
 

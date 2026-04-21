@@ -94,5 +94,5 @@ Enable with `#[cfg(feature = "testing")]` or run tests with `cargo test --featur
 - `src/types/config.rs`: ClaudeAgentOptions definition
 - `src/types/messages.rs`: Message types
 - `src/types/mcp.rs`: MCP server and `tool!` macro
-- `examples/`: 24 comprehensive examples covering all features
+- `examples/`: 26 comprehensive examples covering all features
 - `examples/MCP_INTEGRATION.md`: MCP tool integration guide
