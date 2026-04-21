@@ -2,9 +2,30 @@
 //!
 //! This module provides functions for managing Claude Code sessions,
 //! including listing, retrieving, renaming, tagging, and deleting sessions.
+//!
+//! ## Implementation status
+//!
+//! These helpers correspond to the Python SDK's session management API
+//! (`list_sessions`, `get_session_info`, `tag_session`, …) but the actual
+//! transcript I/O against `~/.claude/projects/<project_hash>/sessions/*.jsonl`
+//! has not yet been ported to Rust. To avoid silently returning empty results
+//! or fabricated records, every helper currently returns
+//! [`ClaudeError::InvalidConfig`] with a `not yet implemented` message. Once
+//! the real implementation lands the error returns will be replaced with the
+//! actual session data.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+use crate::errors::ClaudeError;
+
+fn unimplemented_err(name: &str) -> ClaudeError {
+    ClaudeError::InvalidConfig(format!(
+        "sessions::{name} is not yet implemented in the Rust SDK; \
+         transcript I/O against ~/.claude/projects/.../sessions/*.jsonl has \
+         not been ported from the Python SDK yet"
+    ))
+}
 
 /// Session information returned by list_sessions and get_session_info
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,181 +110,115 @@ pub struct ListSessionsOptions {
     pub sort: SessionSortOrder,
 }
 
-// Placeholder implementations - these will need actual file I/O
-// when connected to real Claude Code session storage
+// NOT-YET-IMPLEMENTED helpers — see module-level docs.
+// Each function returns ClaudeError::InvalidConfig with a "not yet
+// implemented" message rather than fabricating empty data, so callers can
+// detect the absence of real session I/O.
 
-/// List all sessions in a project directory
+/// List all sessions in a project directory.
 ///
-/// # Arguments
-/// * `directory` - Optional project directory (uses current directory if None)
-/// * `options` - Optional listing options (limit, offset, sort)
-///
-/// # Returns
-/// A vector of session information
-///
-/// # Example
-/// ```no_run
-/// use claude_agent_sdk_rs::sessions::{list_sessions, ListSessionsOptions};
-///
-/// let sessions = list_sessions(None, None).await.unwrap();
-/// for session in sessions {
-///     println!("Session: {} - {}", session.session_id, session.summary.unwrap_or_default());
-/// }
-/// ```
+/// Returns [`ClaudeError::InvalidConfig`] until transcript I/O is implemented;
+/// see module docs.
 pub async fn list_sessions(
     _directory: Option<&str>,
     _options: Option<ListSessionsOptions>,
 ) -> crate::Result<Vec<SDKSessionInfo>> {
-    // TODO: Implement actual session file reading
-    // This requires reading from ~/.claude/projects/{project_hash}/sessions/*.jsonl
-    Ok(Vec::new())
+    Err(unimplemented_err("list_sessions"))
 }
 
-/// Get information about a specific session
+/// Get information about a specific session.
 ///
-/// # Arguments
-/// * `session_id` - The session ID to retrieve
-/// * `_directory` - Optional project directory
-///
-/// # Returns
-/// Session information or error if not found
+/// Returns [`ClaudeError::InvalidConfig`] until transcript I/O is implemented;
+/// see module docs.
 pub async fn get_session_info(
-    session_id: &str,
+    _session_id: &str,
     _directory: Option<&str>,
 ) -> crate::Result<SDKSessionInfo> {
-    // TODO: Implement actual session info retrieval
-    Ok(SDKSessionInfo {
-        session_id: session_id.to_string(),
-        summary: None,
-        last_modified: None,
-        file_size: None,
-        custom_title: None,
-        first_prompt: None,
-        git_branch: None,
-        cwd: None,
-        tag: None,
-        created_at: None,
-    })
+    Err(unimplemented_err("get_session_info"))
 }
 
-/// Get messages from a session
+/// Get messages from a session.
 ///
-/// # Arguments
-/// * `_session_id` - The session ID
-/// * `_directory` - Optional project directory
-/// * `_limit` - Maximum number of messages to return
-/// * `_offset` - Offset for pagination
-///
-/// # Returns
-/// A vector of session messages
+/// Returns [`ClaudeError::InvalidConfig`] until transcript I/O is implemented;
+/// see module docs.
 pub async fn get_session_messages(
     _session_id: &str,
     _directory: Option<&str>,
     _limit: Option<usize>,
     _offset: Option<usize>,
 ) -> crate::Result<Vec<SessionMessage>> {
-    // TODO: Implement actual session message reading
-    Ok(Vec::new())
+    Err(unimplemented_err("get_session_messages"))
 }
 
-/// List subagent IDs for a session
+/// List subagent IDs for a session.
 ///
-/// # Arguments
-/// * `_session_id` - The session ID
-/// * `_directory` - Optional project directory
-///
-/// # Returns
-/// A vector of subagent IDs
+/// Returns [`ClaudeError::InvalidConfig`] until transcript I/O is implemented;
+/// see module docs.
 pub async fn list_subagents(
     _session_id: &str,
     _directory: Option<&str>,
 ) -> crate::Result<Vec<String>> {
-    // TODO: Implement actual subagent listing
-    Ok(Vec::new())
+    Err(unimplemented_err("list_subagents"))
 }
 
-/// Get messages from a subagent
+/// Get messages from a subagent.
 ///
-/// # Arguments
-/// * `_session_id` - The session ID
-/// * `_agent_id` - The subagent ID
-/// * `_directory` - Optional project directory
-///
-/// # Returns
-/// A vector of session messages from the subagent
+/// Returns [`ClaudeError::InvalidConfig`] until transcript I/O is implemented;
+/// see module docs.
 pub async fn get_subagent_messages(
     _session_id: &str,
     _agent_id: &str,
     _directory: Option<&str>,
 ) -> crate::Result<Vec<SessionMessage>> {
-    // TODO: Implement actual subagent message reading
-    Ok(Vec::new())
+    Err(unimplemented_err("get_subagent_messages"))
 }
 
-/// Rename a session with a custom title
+/// Rename a session with a custom title.
 ///
-/// # Arguments
-/// * `_session_id` - The session ID
-/// * `_title` - The new title
-/// * `_directory` - Optional project directory
+/// Returns [`ClaudeError::InvalidConfig`] until transcript I/O is implemented;
+/// see module docs.
 pub async fn rename_session(
     _session_id: &str,
     _title: &str,
     _directory: Option<&str>,
 ) -> crate::Result<()> {
-    // TODO: Implement actual session renaming
-    Ok(())
+    Err(unimplemented_err("rename_session"))
 }
 
-/// Tag or clear tag from a session
+/// Tag or clear tag from a session.
 ///
-/// # Arguments
-/// * `_session_id` - The session ID
-/// * `_tag` - The tag to set (None to clear)
-/// * `_directory` - Optional project directory
+/// Returns [`ClaudeError::InvalidConfig`] until transcript I/O is implemented;
+/// see module docs.
 pub async fn tag_session(
     _session_id: &str,
     _tag: Option<&str>,
     _directory: Option<&str>,
 ) -> crate::Result<()> {
-    // TODO: Implement actual session tagging
-    Ok(())
+    Err(unimplemented_err("tag_session"))
 }
 
-/// Delete a session
+/// Delete a session.
 ///
-/// # Arguments
-/// * `_session_id` - The session ID
-/// * `_directory` - Optional project directory
+/// Returns [`ClaudeError::InvalidConfig`] until transcript I/O is implemented;
+/// see module docs.
 pub async fn delete_session(
     _session_id: &str,
     _directory: Option<&str>,
 ) -> crate::Result<()> {
-    // TODO: Implement actual session deletion
-    Ok(())
+    Err(unimplemented_err("delete_session"))
 }
 
-/// Fork a session to create a new branch
+/// Fork a session to create a new branch.
 ///
-/// # Arguments
-/// * `session_id` - The session ID to fork
-/// * `_directory` - Optional project directory
-/// * `_up_to_message_id` - Optional message ID to fork up to
-/// * `_title` - Optional title for the new session
-///
-/// # Returns
-/// The result of the fork operation
+/// Returns [`ClaudeError::InvalidConfig`] until transcript I/O is implemented;
+/// see module docs.
 pub async fn fork_session(
-    session_id: &str,
+    _session_id: &str,
     _directory: Option<&str>,
     _up_to_message_id: Option<&str>,
     _title: Option<&str>,
 ) -> crate::Result<ForkSessionResult> {
-    // TODO: Implement actual session forking
-    Ok(ForkSessionResult {
-        new_session_id: format!("{}-forked", session_id),
-        session_file: PathBuf::new(),
-    })
+    Err(unimplemented_err("fork_session"))
 }
 
 #[cfg(test)]
@@ -307,14 +262,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_sessions_returns_empty() {
-        let sessions = list_sessions(None, None).await.unwrap();
-        assert!(sessions.is_empty());
+    async fn test_list_sessions_returns_not_implemented() {
+        let err = list_sessions(None, None).await.expect_err("must error");
+        match err {
+            ClaudeError::InvalidConfig(msg) => {
+                assert!(msg.contains("not yet implemented"), "got: {msg}");
+                assert!(msg.contains("list_sessions"), "got: {msg}");
+            }
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
     }
 
     #[tokio::test]
-    async fn test_get_session_info_returns_placeholder() {
-        let info = get_session_info("test-id", None).await.unwrap();
-        assert_eq!(info.session_id, "test-id");
+    async fn test_get_session_info_returns_not_implemented() {
+        let err = get_session_info("test-id", None)
+            .await
+            .expect_err("must error");
+        match err {
+            ClaudeError::InvalidConfig(msg) => {
+                assert!(msg.contains("not yet implemented"), "got: {msg}")
+            }
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
     }
 }

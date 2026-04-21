@@ -171,12 +171,26 @@ impl ClaudeClient {
         // Build hooks configuration
         let hooks = self.build_hooks_config();
 
+        // Pull `exclude_dynamic_sections` out of a preset system prompt so it
+        // can be forwarded inside the initialize control request (mirrors
+        // Python `_internal/client.py`).
+        let exclude_dynamic_sections =
+            if let Some(crate::types::config::SystemPrompt::Preset(ref preset)) =
+                self.options.system_prompt
+            {
+                preset.exclude_dynamic_sections
+            } else {
+                None
+            };
+
         // Start reading messages in background
         let shutdown_rx = query.start().await?;
 
         // Initialize with hooks if requested
         if initialize {
-            query.initialize(hooks).await?;
+            query
+                .initialize_with(hooks, exclude_dynamic_sections)
+                .await?;
         }
 
         self.query = Some(Arc::new(query));
@@ -303,18 +317,38 @@ impl ClaudeClient {
             return Ok(());
         }
 
-        // Create transport in streaming mode (no initial prompt)
-        let prompt = QueryPrompt::Streaming;
-        let transport = SubprocessTransport::new(prompt, self.options.clone())?;
+        let load_timeout = self.options.load_timeout_ms;
+        let connect_fut = async {
+            // Create transport in streaming mode (no initial prompt)
+            let prompt = QueryPrompt::Streaming;
+            let transport = SubprocessTransport::new(prompt, self.options.clone())?;
 
-        // Don't send initial prompt - we'll use query() for that
-        transport.connect().await?;
+            // Don't send initial prompt - we'll use query() for that
+            transport.connect().await?;
 
-        // Create Query with hooks
-        let query = QueryFull::new(Box::new(transport));
+            // Create Query with hooks
+            let query = QueryFull::new(Box::new(transport));
 
-        // Use common setup with initialization enabled
-        self.setup_query(query, true).await
+            // Use common setup with initialization enabled
+            self.setup_query(query, true).await
+        };
+
+        match load_timeout {
+            Some(ms) => match tokio::time::timeout(
+                std::time::Duration::from_millis(ms),
+                connect_fut,
+            )
+            .await
+            {
+                Ok(res) => res,
+                Err(_) => Err(crate::errors::ConnectionError::new(format!(
+                    "connect() timed out after {ms}ms (load_timeout_ms); \
+                     increase the timeout or unset it to wait indefinitely"
+                ))
+                .into()),
+            },
+            None => connect_fut.await,
+        }
     }
 
     /// Send a query to Claude
@@ -884,7 +918,7 @@ impl ClaudeClient {
     /// # client.connect().await?;
     /// let status = client.get_mcp_status().await?;
     /// for server in status.mcp_servers {
-    ///     println!("Server {} status: {}", server.name, server.status);
+    ///     println!("Server {} status: {:?}", server.name, server.status);
     /// }
     /// # Ok(())
     /// # }

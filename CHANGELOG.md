@@ -9,17 +9,24 @@ All notable changes to this project will be documented in this file. See [conven
 
 - **(types)** Add `PermissionMode::DontAsk` and `PermissionMode::Auto` variants (Python v0.1.57). Both are now wired through `set_permission_mode()` and the CLI `--permission-mode` flag.
 - **(types)** Add `SystemPrompt::File(SystemPromptFile)` variant (Python v0.1.51). Serializes as `{"type":"file","path":...}` and is forwarded to the CLI as `--system-prompt-file <path>`.
-- **(types)** Add `exclude_dynamic_sections: Option<bool>` field on `SystemPromptPreset` (Python v0.1.57), with builder helper `with_exclude_dynamic_sections(...)`.
+- **(types)** Add `exclude_dynamic_sections: Option<bool>` field on `SystemPromptPreset` (Python v0.1.57), with builder helper `with_exclude_dynamic_sections(...)`. Forwarded inside the initialize control request as `excludeDynamicSections` (matches Python `_internal/query.py`).
 - **(types)** Add `ClaudeAgentOptions::session_id` (Python v0.1.52) — pre-assigns the session id for a NEW session; distinct from `resume`, which re-opens an existing one. Wired to the CLI as `--session-id <id>`.
-- **(types)** Replace `skills: Vec<String>` with `skills: Option<Skills>` enum supporting both `Skills::All` and `Skills::List(Vec<String>)` (Python v0.1.62). The skills option is now actually wired through to the CLI's `--allowedTools` (previously a no-op): `Skills::All` adds the bare `Skill` tool; `Skills::List` adds `Skill(name)` per entry.
+- **(types)** Replace `skills: Vec<String>` with `skills: Option<Skills>` enum supporting both `Skills::All` and `Skills::List(Vec<String>)` (Python v0.1.62). Folded into `--allowedTools` matching Python's `_apply_skills_defaults` semantics.
+- **(transport)** Wire `thinking` (`ThinkingConfig::{Adaptive,Enabled,Disabled}`), `effort`, and `task_budget` to the CLI as `--thinking`, `--max-thinking-tokens`, `--effort`, `--task-budget` (matches Python `_internal/transport/subprocess_cli.py`). The structured `thinking` field takes precedence over the deprecated `max_thinking_tokens`.
+- **(client)** `load_timeout_ms` is now actually applied as a `tokio::time::timeout` around `connect()`; previously it was stored but ignored.
 
 ### Bug Fixes
 
+- **(query_full)** `get_mcp_status()` and `get_context_usage()` now correctly unwrap the CLI's nested `response` envelope before deserializing into `McpStatusResponse` / `ContextUsageResponse`. Previously they always failed on a successful CLI response because the wire format is `{"type":"control_response","response":{"subtype":"success","request_id":"...","response":<payload>}}` and the inner `.response` was not stripped. The unwrap now happens once at the channel sender, matching Python `_send_control_request`.
+- **(sessions)** All stub session helpers (`list_sessions`, `get_session_info`, `get_session_messages`, `list_subagents`, `get_subagent_messages`, `rename_session`, `tag_session`, `delete_session`, `fork_session`) now return `ClaudeError::InvalidConfig("not yet implemented in the Rust SDK")` instead of silently returning empty data or fabricated records. Callers can detect the absence of real session I/O instead of being misled by silent success.
+- **(types/session_store)** `InMemorySessionStore::append` now actually persists entries (was previously a no-op due to a missing interior mutability wrapper). The store is now usable for the testing/resume scenarios it was documented for. `delete` and `list_subkeys` were also given real implementations; `list_sessions` reflects appends.
 - **(transport)** `options.skills` was previously declared but never wired to the CLI argv. It is now folded into `--allowedTools` matching Python SDK `_apply_skills_defaults` semantics.
+- **(doctests)** Fix 3 pre-existing doctest compile failures: `get_mcp_status` example (`McpServerConnectionStatus` doesn't impl `Display`), `SessionStore` example (referenced absent `redis` crate), `list_sessions` example (called `.unwrap()` on a now-erroring stub).
 
 ### Notes
 
 - The `skills` field type changed from `Vec<String>` to `Option<Skills>`. Callers passing `vec![...]` continue to work via the existing `From<Vec<String>>` impl on `Skills`.
+- The session helpers in `sessions.rs` now return errors instead of empty data — this is a deliberate behavior change aimed at preventing silent failure. Callers that previously relied on `Ok(empty)` should switch to checking for `ClaudeError::InvalidConfig` until the real transcript I/O lands.
 - `add_mcp_server()` / `remove_mcp_server()` are NOT added in this release. They appear in the Python v0.1.46 changelog but are not actually present in the Python v0.1.63 source.
 
 ---

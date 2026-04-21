@@ -398,10 +398,39 @@ impl SubprocessTransport {
             args.push(max_budget.to_string());
         }
 
-        // Add max thinking tokens
-        if let Some(max_thinking) = self.options.max_thinking_tokens {
+        // Resolve thinking config → --thinking / --max-thinking-tokens.
+        // The structured `thinking` field takes precedence over the deprecated
+        // `max_thinking_tokens`, mirroring Python `_internal/transport/subprocess_cli.py`.
+        if let Some(ref thinking) = self.options.thinking {
+            match thinking {
+                crate::types::config::ThinkingConfig::Adaptive => {
+                    args.push("--thinking".to_string());
+                    args.push("adaptive".to_string());
+                }
+                crate::types::config::ThinkingConfig::Enabled { budget_tokens } => {
+                    args.push("--max-thinking-tokens".to_string());
+                    args.push(budget_tokens.to_string());
+                }
+                crate::types::config::ThinkingConfig::Disabled => {
+                    args.push("--thinking".to_string());
+                    args.push("disabled".to_string());
+                }
+            }
+        } else if let Some(max_thinking) = self.options.max_thinking_tokens {
             args.push("--max-thinking-tokens".to_string());
             args.push(max_thinking.to_string());
+        }
+
+        // Effort level (low | medium | high | max).
+        if let Some(ref effort) = self.options.effort {
+            args.push("--effort".to_string());
+            args.push(effort.clone());
+        }
+
+        // Task budget (per Python: --task-budget <total>).
+        if let Some(ref budget) = self.options.task_budget {
+            args.push("--task-budget".to_string());
+            args.push(budget.total.to_string());
         }
 
         // Add permission prompt tool name

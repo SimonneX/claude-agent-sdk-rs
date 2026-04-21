@@ -99,8 +99,11 @@ Enable with `#[cfg(feature = "testing")]` or run tests with `cargo test --featur
 control method as a task → poll `MockTransport::written_messages_async()`
 until the request appears → extract `request_id` from the JSON →
 `mock.inject(...)` a `{"type":"control_response","response":{"subtype":
-"success","request_id":"..."}}` envelope → await the task. Extra fields in
-the response are flattened into the data the caller receives.
+"success","request_id":"...","response":<payload>}}` envelope → await the
+task. The payload MUST be nested inside the inner `response` field — that's
+the actual CLI wire format (see `tools/capture_control_protocol.py`). The
+SDK strips that wrapper once at the channel sender so callers receive the
+unwrapped payload (matches Python `_send_control_request`).
 
 ## Important Files
 

@@ -66,24 +66,24 @@ pub struct SessionListSubkeysKey {
 /// };
 /// use async_trait::async_trait;
 ///
-/// struct RedisSessionStore {
-///     client: redis::Client,
-/// }
+/// /// A custom backend (e.g. backed by Redis, S3, Postgres). Pretend the
+/// /// internal client is provided by your application.
+/// struct CustomSessionStore;
 ///
 /// #[async_trait]
-/// impl SessionStore for RedisSessionStore {
-///     async fn append(&self, key: &SessionKey, entries: Vec<SessionStoreEntry>) -> claude_agent_sdk_rs::Result<()> {
-///         // Store entries in Redis
+/// impl SessionStore for CustomSessionStore {
+///     async fn append(&self, _key: &SessionKey, _entries: Vec<SessionStoreEntry>) -> claude_agent_sdk_rs::Result<()> {
+///         // Persist entries to your backing store of choice
 ///         Ok(())
 ///     }
 ///
-///     async fn load(&self, key: &SessionKey) -> claude_agent_sdk_rs::Result<Option<Vec<SessionStoreEntry>>> {
-///         // Load entries from Redis
+///     async fn load(&self, _key: &SessionKey) -> claude_agent_sdk_rs::Result<Option<Vec<SessionStoreEntry>>> {
+///         // Load entries from your backing store of choice
 ///         Ok(None)
 ///     }
 ///
-///     async fn list_sessions(&self, project_key: &str) -> claude_agent_sdk_rs::Result<Vec<SessionStoreListEntry>> {
-///         // List sessions from Redis
+///     async fn list_sessions(&self, _project_key: &str) -> claude_agent_sdk_rs::Result<Vec<SessionStoreListEntry>> {
+///         // List sessions from your backing store of choice
 ///         Ok(Vec::new())
 ///     }
 /// }
@@ -137,19 +137,32 @@ pub trait SessionStore: Send + Sync {
     }
 }
 
-/// In-memory session store (for testing)
+/// In-memory session store backed by a `tokio::sync::Mutex<HashMap<...>>`.
+/// Suitable for tests and short-lived processes; not durable across restarts.
 pub struct InMemorySessionStore {
-    sessions: std::collections::HashMap<String, Vec<SessionStoreEntry>>,
-    session_lists: std::collections::HashMap<String, Vec<SessionStoreListEntry>>,
+    /// Keyed by `"{project_key}:{session_id}:{subpath_or_empty}"`.
+    sessions: tokio::sync::Mutex<std::collections::HashMap<String, Vec<SessionStoreEntry>>>,
+    /// Keyed by `project_key`.
+    session_lists:
+        tokio::sync::Mutex<std::collections::HashMap<String, Vec<SessionStoreListEntry>>>,
 }
 
 impl InMemorySessionStore {
     /// Create a new in-memory session store
     pub fn new() -> Self {
         Self {
-            sessions: std::collections::HashMap::new(),
-            session_lists: std::collections::HashMap::new(),
+            sessions: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+            session_lists: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         }
+    }
+
+    fn entry_key(key: &SessionKey) -> String {
+        format!(
+            "{}:{}:{}",
+            key.project_key,
+            key.session_id,
+            key.subpath.as_deref().unwrap_or("")
+        )
     }
 }
 
@@ -161,30 +174,87 @@ impl Default for InMemorySessionStore {
 
 #[async_trait]
 impl SessionStore for InMemorySessionStore {
-    async fn append(&self, _key: &SessionKey, _entries: Vec<SessionStoreEntry>) -> Result<()> {
-        // Note: InMemorySessionStore would need interior mutability for actual use
-        // This is a placeholder for demonstration
+    async fn append(&self, key: &SessionKey, entries: Vec<SessionStoreEntry>) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let store_key = Self::entry_key(key);
+
+        // Persist the entries themselves.
+        {
+            let mut sessions = self.sessions.lock().await;
+            sessions.entry(store_key).or_default().extend(entries);
+        }
+
+        // Maintain the per-project session list so list_sessions reflects the
+        // append. Use the latest entry's timestamp (or now) as mtime.
+        let now = chrono_rfc3339_now();
+        let mut lists = self.session_lists.lock().await;
+        let project_entries = lists.entry(key.project_key.clone()).or_default();
+        if let Some(existing) = project_entries
+            .iter_mut()
+            .find(|e| e.session_id == key.session_id)
+        {
+            existing.mtime = now;
+        } else {
+            project_entries.push(SessionStoreListEntry {
+                session_id: key.session_id.clone(),
+                mtime: now,
+            });
+        }
+
         Ok(())
     }
 
     async fn load(&self, key: &SessionKey) -> Result<Option<Vec<SessionStoreEntry>>> {
-        let _store_key = format!("{}:{}:{}", key.project_key, key.session_id, key.subpath.as_deref().unwrap_or(""));
-        Ok(self.sessions.get(&_store_key).cloned())
+        let store_key = Self::entry_key(key);
+        let sessions = self.sessions.lock().await;
+        Ok(sessions.get(&store_key).cloned())
     }
 
     async fn list_sessions(&self, project_key: &str) -> Result<Vec<SessionStoreListEntry>> {
-        Ok(self.session_lists.get(project_key).cloned().unwrap_or_default())
+        let lists = self.session_lists.lock().await;
+        Ok(lists.get(project_key).cloned().unwrap_or_default())
     }
 
-    async fn delete(&self, _key: &SessionKey) -> Result<()> {
-        // Placeholder
+    async fn delete(&self, key: &SessionKey) -> Result<()> {
+        let store_key = Self::entry_key(key);
+        {
+            let mut sessions = self.sessions.lock().await;
+            sessions.remove(&store_key);
+        }
+        let mut lists = self.session_lists.lock().await;
+        if let Some(entries) = lists.get_mut(&key.project_key) {
+            entries.retain(|e| e.session_id != key.session_id);
+        }
         Ok(())
     }
 
-    async fn list_subkeys(&self, _key: &SessionListSubkeysKey) -> Result<Vec<String>> {
-        // Placeholder
-        Ok(Vec::new())
+    async fn list_subkeys(&self, key: &SessionListSubkeysKey) -> Result<Vec<String>> {
+        let prefix = format!("{}:{}:", key.project_key, key.session_id);
+        let sessions = self.sessions.lock().await;
+        let mut subkeys: Vec<String> = sessions
+            .keys()
+            .filter_map(|k| k.strip_prefix(&prefix).map(|s| s.to_string()))
+            .filter(|s| !s.is_empty())
+            .collect();
+        subkeys.sort();
+        Ok(subkeys)
     }
+}
+
+/// Best-effort current timestamp formatted as RFC3339 without pulling in
+/// chrono. Falls back to a fixed sentinel if the system clock is broken.
+fn chrono_rfc3339_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Plain "epoch seconds since 1970" string is enough for ordering by mtime
+    // in tests; callers that care about real RFC3339 should provide their own
+    // store impl.
+    format!("epoch:{secs}")
 }
 
 /// Derive project key from directory path
@@ -252,21 +322,74 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_in_memory_session_store() {
+    async fn test_in_memory_session_store_initial_state_is_empty() {
         let store = InMemorySessionStore::new();
-
         let key = SessionKey {
             project_key: "test-project".to_string(),
             session_id: "test-session".to_string(),
             subpath: None,
         };
+        assert!(store.load(&key).await.unwrap().is_none());
+        assert!(store.list_sessions("test-project").await.unwrap().is_empty());
+    }
 
-        // Load should return None initially
-        let result = store.load(&key).await.unwrap();
-        assert!(result.is_none());
+    #[tokio::test]
+    async fn test_in_memory_session_store_round_trip() {
+        let store = InMemorySessionStore::new();
+        let key = SessionKey {
+            project_key: "p1".to_string(),
+            session_id: "s1".to_string(),
+            subpath: None,
+        };
+        let entry_a = SessionStoreEntry {
+            type_: "user".to_string(),
+            uuid: Some("u-1".to_string()),
+            timestamp: Some("t-1".to_string()),
+        };
+        let entry_b = SessionStoreEntry {
+            type_: "assistant".to_string(),
+            uuid: Some("u-2".to_string()),
+            timestamp: Some("t-2".to_string()),
+        };
 
-        // List sessions should return empty
-        let sessions = store.list_sessions("test-project").await.unwrap();
-        assert!(sessions.is_empty());
+        store
+            .append(&key, vec![entry_a.clone(), entry_b.clone()])
+            .await
+            .unwrap();
+
+        let loaded = store.load(&key).await.unwrap().expect("present");
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].uuid.as_deref(), Some("u-1"));
+        assert_eq!(loaded[1].uuid.as_deref(), Some("u-2"));
+
+        // append again — should accumulate, not overwrite.
+        store.append(&key, vec![entry_a.clone()]).await.unwrap();
+        assert_eq!(store.load(&key).await.unwrap().unwrap().len(), 3);
+
+        // list_sessions reflects the project.
+        let listed = store.list_sessions("p1").await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].session_id, "s1");
+
+        // Subkey listing for sub-paths.
+        let sub_key = SessionKey {
+            project_key: "p1".to_string(),
+            session_id: "s1".to_string(),
+            subpath: Some("subagent-A".to_string()),
+        };
+        store.append(&sub_key, vec![entry_a.clone()]).await.unwrap();
+        let subs = store
+            .list_subkeys(&SessionListSubkeysKey {
+                project_key: "p1".to_string(),
+                session_id: "s1".to_string(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(subs, vec!["subagent-A".to_string()]);
+
+        // delete removes the session and its list entry.
+        store.delete(&key).await.unwrap();
+        assert!(store.load(&key).await.unwrap().is_none());
+        assert!(store.list_sessions("p1").await.unwrap().is_empty());
     }
 }

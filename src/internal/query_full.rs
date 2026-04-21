@@ -116,10 +116,26 @@ impl QueryFull {
         }
     }
 
-    /// Initialize with hooks
+    /// Initialize with hooks (no preset-prompt extras). Thin wrapper around
+    /// [`Self::initialize_with`]; kept for API compatibility and used by
+    /// existing tests.
+    #[allow(dead_code)]
     pub async fn initialize(
         &self,
         hooks: Option<HashMap<String, Vec<HookMatcher>>>,
+    ) -> Result<serde_json::Value> {
+        self.initialize_with(hooks, None).await
+    }
+
+    /// Initialize with hooks plus optional preset-prompt knobs that travel
+    /// inside the initialize control request rather than the CLI argv.
+    /// Currently the only such knob is `exclude_dynamic_sections`, mirroring
+    /// Python `_internal/query.py:initialize` which forwards it as
+    /// `excludeDynamicSections`.
+    pub async fn initialize_with(
+        &self,
+        hooks: Option<HashMap<String, Vec<HookMatcher>>>,
+        exclude_dynamic_sections: Option<bool>,
     ) -> Result<serde_json::Value> {
         // Build hooks configuration
         let mut hooks_config: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
@@ -158,10 +174,14 @@ impl QueryFull {
         }
 
         // Send initialize request
-        let request = json!({
+        let mut request = json!({
             "subtype": "initialize",
             "hooks": if hooks_config.is_empty() { json!(null) } else { json!(hooks_config) }
         });
+
+        if let Some(eds) = exclude_dynamic_sections {
+            request["excludeDynamicSections"] = json!(eds);
+        }
 
         let response = self.send_control_request(request).await?;
 
@@ -203,7 +223,16 @@ impl QueryFull {
 
                         match msg_type {
                             Some("control_response") => {
-                                // Handle control response
+                                // Handle control response.
+                                //
+                                // Wire format from CLI (see Python `_internal/query.py`
+                                // `_send_control_request` and `tools/capture_control_protocol.py`):
+                                //   {"type":"control_response",
+                                //    "response":{"subtype":"success","request_id":"...","response":<actual>}}
+                                // The inner `.response` holds the real payload that callers want
+                                // (e.g. McpStatusResponse, ContextUsageResponse, the initialize
+                                // result). Strip it once here so every caller receives the
+                                // unwrapped value, matching Python's behavior.
                                 if let Ok(response) =
                                     serde_json::from_value::<ControlResponse>(message.clone())
                                 {
@@ -211,7 +240,13 @@ impl QueryFull {
                                     if let Some((_, tx)) =
                                         pending_responses.remove(&response.response.request_id)
                                     {
-                                        let _ = tx.send(response.response.data);
+                                        let inner = response
+                                            .response
+                                            .data
+                                            .get("response")
+                                            .cloned()
+                                            .unwrap_or(serde_json::Value::Null);
+                                        let _ = tx.send(inner);
                                     }
                                 }
                             }
@@ -619,20 +654,19 @@ mod tests {
             .to_string()
     }
 
-    fn success_response(request_id: &str, extra: serde_json::Value) -> serde_json::Value {
-        let mut response = json!({
-            "subtype": "success",
-            "request_id": request_id,
-        });
-        // Merge extras at the top level (flattened by ControlResponseData::data)
-        if let Some(map) = extra.as_object() {
-            for (k, v) in map {
-                response[k] = v.clone();
-            }
-        }
+    /// Build a CLI-shaped successful control_response envelope.
+    ///
+    /// Wire format mirrors what the Python tool capture
+    /// (`tools/capture_control_protocol.py`) records: the actual payload sits
+    /// under a nested `response` field, NOT flattened at the top level.
+    fn success_response(request_id: &str, payload: serde_json::Value) -> serde_json::Value {
         json!({
             "type": "control_response",
-            "response": response,
+            "response": {
+                "subtype": "success",
+                "request_id": request_id,
+                "response": payload,
+            },
         })
     }
 

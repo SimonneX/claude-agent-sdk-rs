@@ -64,20 +64,19 @@ fn request_id_of(written: &str) -> String {
         .to_string()
 }
 
-/// Build a `control_response` envelope. `extra` is merged into the response
-/// alongside `subtype` and `request_id` (these are extracted by the SDK and
-/// the rest is delivered to the awaiting caller via `#[serde(flatten)]`).
-fn success_response(request_id: &str, extra: serde_json::Value) -> serde_json::Value {
-    let mut response = json!({
-        "subtype": "success",
-        "request_id": request_id,
-    });
-    if let Some(map) = extra.as_object() {
-        for (k, v) in map {
-            response[k] = v.clone();
-        }
-    }
-    json!({"type": "control_response", "response": response})
+/// Build a `control_response` envelope matching the real CLI wire format
+/// (see `tools/capture_control_protocol.py`): the actual payload sits in a
+/// nested `response` field. The SDK strips that wrapper once at the channel
+/// sender so callers receive `payload` directly.
+fn success_response(request_id: &str, payload: serde_json::Value) -> serde_json::Value {
+    json!({
+        "type": "control_response",
+        "response": {
+            "subtype": "success",
+            "request_id": request_id,
+            "response": payload,
+        },
+    })
 }
 
 /// Drive a control-method round-trip: spawn the call, wait for the
