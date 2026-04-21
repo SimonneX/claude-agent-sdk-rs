@@ -18,14 +18,18 @@ cargo build --release
 # Build all examples
 cargo build --examples
 
-# Run tests
-cargo test
+# Run tests (lib + integration). NOTE: 3 pre-existing doctest failures
+# (redis dep, async-ctx) are unrelated to your changes — verify with --lib.
+cargo test --features testing
+
+# Lib tests only — fastest feedback loop, skips flaky doctests
+cargo test --features testing --lib
 
 # Run specific test
-cargo test test_name
+cargo test --features testing test_name
 
 # Run tests with output
-cargo test -- --nocapture
+cargo test --features testing -- --nocapture
 
 # Lint
 cargo clippy --all-targets --all-features
@@ -49,7 +53,8 @@ cargo run --example 06_bidirectional_client
 src/lib.rs → Public API re-exports
 src/client.rs → ClaudeClient (bidirectional streaming)
 src/query.rs → Simple query functions (query, query_stream)
-src/internal/ → Private implementation
+src/internal/ → Private implementation (NOT reachable from tests/;
+                  use inline #[cfg(test)] mod tests for these)
   ├── transport/ → SubprocessTransport (stdio communication with Claude CLI)
   ├── message_parser.rs → JSON → Message parsing
   └── query_full.rs → Full query state management
@@ -85,8 +90,17 @@ The `testing` feature enables a mock framework:
 - `MockTransport`: Replace subprocess with scripted responses
 - `ScenarioBuilder`: Define message sequences
 - Message builders: `AssistantMessageBuilder`, `ResultMessageBuilder`, etc.
+- `QueryFull::new_with_transport` is gated on `feature = "testing"`
 
 Enable with `#[cfg(feature = "testing")]` or run tests with `cargo test --features testing`.
+
+**Bidirectional control protocol round-trip pattern** (used in
+`src/internal/query_full.rs` and `tests/client_control_tests.rs`): spawn the
+control method as a task → poll `MockTransport::written_messages_async()`
+until the request appears → extract `request_id` from the JSON →
+`mock.inject(...)` a `{"type":"control_response","response":{"subtype":
+"success","request_id":"..."}}` envelope → await the task. Extra fields in
+the response are flattened into the data the caller receives.
 
 ## Important Files
 
