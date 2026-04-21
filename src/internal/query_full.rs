@@ -578,3 +578,394 @@ impl QueryFull {
         Ok(context_response)
     }
 }
+
+#[cfg(all(test, feature = "testing"))]
+mod tests {
+    use super::*;
+    use crate::testing::MockTransport;
+    use crate::types::config::PermissionMode;
+    use crate::types::hooks::{
+        HookCallback, HookInput, HookJsonOutput, HookMatcher, SyncHookJsonOutput,
+    };
+    use std::collections::HashMap;
+    use std::time::Duration;
+    use tokio::sync::Notify;
+
+    /// Wait up to `timeout` for the mock to capture at least `n` writes.
+    async fn wait_for_writes(mock: &MockTransport, n: usize, timeout: Duration) -> Vec<String> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let writes: Vec<String> = mock
+                .written_messages_async()
+                .await
+                .into_iter()
+                .map(|w| w.data)
+                .collect();
+            if writes.len() >= n {
+                return writes;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                panic!("timed out waiting for {} write(s); have {}", n, writes.len());
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    fn extract_request_id(written: &str) -> String {
+        let v: serde_json::Value = serde_json::from_str(written).expect("written json");
+        v["request_id"]
+            .as_str()
+            .expect("request_id missing")
+            .to_string()
+    }
+
+    fn success_response(request_id: &str, extra: serde_json::Value) -> serde_json::Value {
+        let mut response = json!({
+            "subtype": "success",
+            "request_id": request_id,
+        });
+        // Merge extras at the top level (flattened by ControlResponseData::data)
+        if let Some(map) = extra.as_object() {
+            for (k, v) in map {
+                response[k] = v.clone();
+            }
+        }
+        json!({
+            "type": "control_response",
+            "response": response,
+        })
+    }
+
+    async fn setup() -> (Arc<MockTransport>, Arc<QueryFull>, oneshot::Receiver<()>) {
+        let mock = Arc::new(MockTransport::builder().build());
+        mock.connect().await.unwrap();
+        let query = Arc::new(QueryFull::new_with_transport(
+            Arc::clone(&mock) as Arc<dyn Transport>
+        ));
+        let shutdown = query.start().await.unwrap();
+        (mock, query, shutdown)
+    }
+
+    // ==================== P0-2: Control protocol ====================
+
+    #[tokio::test]
+    async fn interrupt_round_trip() {
+        let (mock, query, _shutdown) = setup().await;
+
+        let q = Arc::clone(&query);
+        let handle = tokio::spawn(async move { q.interrupt().await });
+
+        let writes = wait_for_writes(&mock, 1, Duration::from_secs(2)).await;
+        let req_id = extract_request_id(&writes[0]);
+        mock.inject(success_response(&req_id, json!({})));
+
+        handle.await.unwrap().unwrap();
+        mock.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn out_of_order_control_responses_are_matched_by_request_id() {
+        let (mock, query, _shutdown) = setup().await;
+
+        // Fire two concurrent control requests
+        let q1 = Arc::clone(&query);
+        let q2 = Arc::clone(&query);
+        let h1 = tokio::spawn(async move { q1.interrupt().await });
+        let h2 = tokio::spawn(async move { q2.set_permission_mode(PermissionMode::Plan).await });
+
+        let writes = wait_for_writes(&mock, 2, Duration::from_secs(2)).await;
+        let id1 = extract_request_id(&writes[0]);
+        let id2 = extract_request_id(&writes[1]);
+        assert_ne!(id1, id2, "request ids must be unique");
+
+        // Reply in reverse order
+        mock.inject(success_response(&id2, json!({})));
+        mock.inject(success_response(&id1, json!({})));
+
+        h1.await.unwrap().unwrap();
+        h2.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn orphan_control_response_is_ignored_and_pipeline_keeps_running() {
+        let (mock, query, _shutdown) = setup().await;
+
+        // Inject a response for a nonexistent request — must not panic
+        mock.inject(success_response("req_does_not_exist", json!({})));
+
+        // Then a regular message — should arrive on message_rx
+        mock.inject(json!({"type": "system", "subtype": "init"}));
+
+        // Receive the regular message via the public API
+        let rx = query.message_rx.clone();
+        let msg = tokio::time::timeout(Duration::from_secs(2), rx.recv_async())
+            .await
+            .expect("timeout waiting for message")
+            .expect("channel closed");
+        assert_eq!(msg["type"], "system");
+
+        mock.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn request_ids_are_unique_under_concurrency() {
+        let (mock, query, _shutdown) = setup().await;
+
+        let n = 20usize;
+        let mut handles = Vec::with_capacity(n);
+        for _ in 0..n {
+            let q = Arc::clone(&query);
+            handles.push(tokio::spawn(async move { q.interrupt().await }));
+        }
+
+        let writes = wait_for_writes(&mock, n, Duration::from_secs(3)).await;
+        let mut ids: Vec<String> = writes.iter().map(|w| extract_request_id(w)).collect();
+        ids.sort();
+        let before = ids.len();
+        ids.dedup();
+        assert_eq!(ids.len(), before, "duplicate request_id detected");
+
+        // Reply to each so handles can complete
+        for id in &ids {
+            mock.inject(success_response(id, json!({})));
+        }
+        for h in handles {
+            h.await.unwrap().unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn closing_transport_terminates_background_task() {
+        let (mock, _query, shutdown) = setup().await;
+
+        // Closing causes read_messages to break out of its loop
+        mock.close().await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(2), shutdown)
+            .await
+            .expect("background task did not shut down")
+            .expect("shutdown channel dropped");
+    }
+
+    #[tokio::test]
+    async fn regular_message_routes_to_message_rx() {
+        let (mock, query, _shutdown) = setup().await;
+
+        mock.inject(json!({
+            "type": "assistant",
+            "message": {"content": []}
+        }));
+
+        let rx = query.message_rx.clone();
+        let msg = tokio::time::timeout(Duration::from_secs(2), rx.recv_async())
+            .await
+            .expect("timeout")
+            .expect("closed");
+        assert_eq!(msg["type"], "assistant");
+    }
+
+    #[tokio::test]
+    async fn initialization_result_is_set_after_initialize() {
+        let (mock, query, _shutdown) = setup().await;
+
+        // initialize() sends a control_request with subtype=initialize
+        let q = Arc::clone(&query);
+        let handle = tokio::spawn(async move { q.initialize(None).await });
+
+        let writes = wait_for_writes(&mock, 1, Duration::from_secs(2)).await;
+        let req_id = extract_request_id(&writes[0]);
+        mock.inject(success_response(
+            &req_id,
+            json!({"commands": ["a", "b"], "outputStyles": []}),
+        ));
+
+        let result = handle.await.unwrap().unwrap();
+        assert_eq!(result["commands"][0], "a");
+
+        // OnceLock is now populated
+        let cached = query.get_initialization_result().expect("cached");
+        assert_eq!(cached["commands"][1], "b");
+    }
+
+    // ==================== P0-3: Hook callback dispatch ====================
+
+    fn make_hook_matcher(notify: Arc<Notify>, captured: Arc<Mutex<Option<HookInput>>>) -> HookMatcher {
+        let cb: HookCallback = Arc::new(move |input, _tool_use_id, _ctx| {
+            let notify = Arc::clone(&notify);
+            let captured = Arc::clone(&captured);
+            Box::pin(async move {
+                *captured.lock().await = Some(input);
+                notify.notify_one();
+                HookJsonOutput::Sync(SyncHookJsonOutput {
+                    continue_: Some(true),
+                    ..Default::default()
+                })
+            })
+        });
+        HookMatcher {
+            matcher: Some("Bash".to_string()),
+            hooks: vec![cb],
+            timeout: None,
+        }
+    }
+
+    use tokio::sync::Mutex;
+
+    async fn install_hook_and_get_callback_id(
+        mock: &MockTransport,
+        query: &Arc<QueryFull>,
+        matcher: HookMatcher,
+    ) -> String {
+        let mut hooks = HashMap::new();
+        hooks.insert("PreToolUse".to_string(), vec![matcher]);
+
+        // Drive initialize() so callbacks register and we can find their ID
+        let q = Arc::clone(query);
+        let handle = tokio::spawn(async move { q.initialize(Some(hooks)).await });
+
+        let writes = wait_for_writes(mock, 1, Duration::from_secs(2)).await;
+        let init_req: serde_json::Value = serde_json::from_str(&writes[0]).unwrap();
+        let req_id = init_req["request_id"].as_str().unwrap().to_string();
+
+        // Pull the registered callback id out of the request payload
+        let callback_id = init_req["request"]["hooks"]["PreToolUse"][0]["hookCallbackIds"][0]
+            .as_str()
+            .expect("callback id present in initialize request")
+            .to_string();
+
+        mock.inject(success_response(&req_id, json!({})));
+        handle.await.unwrap().unwrap();
+
+        callback_id
+    }
+
+    #[tokio::test]
+    async fn hook_callback_is_invoked_when_cli_dispatches() {
+        let (mock, query, _shutdown) = setup().await;
+        let notify = Arc::new(Notify::new());
+        let captured: Arc<Mutex<Option<HookInput>>> = Arc::new(Mutex::new(None));
+        let matcher = make_hook_matcher(Arc::clone(&notify), Arc::clone(&captured));
+        let callback_id = install_hook_and_get_callback_id(&mock, &query, matcher).await;
+
+        // CLI -> SDK control_request to fire the hook
+        let cli_req_id = "req_from_cli_1";
+        mock.inject(json!({
+            "type": "control_request",
+            "request_id": cli_req_id,
+            "request": {
+                "subtype": "hook_callback",
+                "callback_id": callback_id,
+                "tool_use_id": "tool_1",
+                "input": {
+                    "hook_event_name": "PreToolUse",
+                    "session_id": "s1",
+                    "transcript_path": "/tmp/x",
+                    "cwd": "/tmp",
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "echo hi"}
+                }
+            }
+        }));
+
+        // Wait for the callback to fire
+        tokio::time::timeout(Duration::from_secs(2), notify.notified())
+            .await
+            .expect("callback never fired");
+
+        let captured = captured.lock().await;
+        match captured.as_ref().expect("input not captured") {
+            HookInput::PreToolUse(p) => {
+                assert_eq!(p.tool_name, "Bash");
+                assert_eq!(p.tool_input["command"], "echo hi");
+            }
+            other => panic!("wrong input variant: {:?}", other),
+        }
+
+        // SDK should have written a control_response back to the CLI.
+        // Skip the initialize write (index 0); look for the hook response.
+        let writes = wait_for_writes(&mock, 2, Duration::from_secs(2)).await;
+        let response_write = writes
+            .iter()
+            .find(|w| w.contains("control_response") && w.contains(cli_req_id))
+            .expect("response not written");
+        let v: serde_json::Value = serde_json::from_str(response_write).unwrap();
+        assert_eq!(v["response"]["subtype"], "success");
+        assert_eq!(v["response"]["request_id"], cli_req_id);
+        assert_eq!(v["response"]["response"]["continue"], true);
+    }
+
+    #[tokio::test]
+    async fn unknown_hook_callback_id_is_handled_without_panic() {
+        let (mock, query, _shutdown) = setup().await;
+
+        // Inject a hook_callback control_request with a callback_id that was never registered
+        mock.inject(json!({
+            "type": "control_request",
+            "request_id": "req_bogus_1",
+            "request": {
+                "subtype": "hook_callback",
+                "callback_id": "hook_does_not_exist",
+                "input": {
+                    "hook_event_name": "Stop",
+                    "session_id": "s1",
+                    "transcript_path": "/tmp/x",
+                    "cwd": "/tmp",
+                    "stop_hook_active": false
+                }
+            }
+        }));
+
+        // Pipeline should still process normal traffic afterwards
+        mock.inject(json!({"type": "system", "subtype": "init"}));
+        let rx = query.message_rx.clone();
+        let msg = tokio::time::timeout(Duration::from_secs(2), rx.recv_async())
+            .await
+            .expect("timeout")
+            .expect("channel closed");
+        assert_eq!(msg["type"], "system");
+    }
+
+    #[tokio::test]
+    async fn missing_subtype_in_control_request_is_handled() {
+        let (mock, query, _shutdown) = setup().await;
+
+        mock.inject(json!({
+            "type": "control_request",
+            "request_id": "req_no_subtype",
+            "request": {"some": "garbage"}
+        }));
+
+        // Pipeline keeps working
+        mock.inject(json!({"type": "system", "subtype": "init"}));
+        let rx = query.message_rx.clone();
+        let msg = tokio::time::timeout(Duration::from_secs(2), rx.recv_async())
+            .await
+            .expect("timeout")
+            .expect("channel closed");
+        assert_eq!(msg["type"], "system");
+    }
+
+    #[tokio::test]
+    async fn mcp_message_for_unknown_server_is_handled() {
+        let (mock, query, _shutdown) = setup().await;
+
+        mock.inject(json!({
+            "type": "control_request",
+            "request_id": "req_mcp_unknown",
+            "request": {
+                "subtype": "mcp_message",
+                "server_name": "ghost_server",
+                "message": {"jsonrpc": "2.0", "method": "tools/list", "id": 1}
+            }
+        }));
+
+        // Pipeline still processes regular messages
+        mock.inject(json!({"type": "system", "subtype": "init"}));
+        let rx = query.message_rx.clone();
+        let msg = tokio::time::timeout(Duration::from_secs(2), rx.recv_async())
+            .await
+            .expect("timeout")
+            .expect("channel closed");
+        assert_eq!(msg["type"], "system");
+    }
+}
